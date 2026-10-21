@@ -11,8 +11,6 @@ export interface PaymentEvent {
   phone: string | null;
   cardLast4: string | null;
   installments: number;
-  /** מזהה חיוב חוזר (הוראת קבע) אצל הספק - נשמר ב-subscriptions.card_token */
-  recurringId: string | null;
   /** הפניה מפורשת לרכישה אצלנו, אם הועברה לספק: "s123" למנוי או "o45" להזמנה */
   reference: string | null;
   errorCode: string | null;

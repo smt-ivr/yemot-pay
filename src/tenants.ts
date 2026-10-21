@@ -1,13 +1,11 @@
 export interface TenantConfig {
   /** המזהה שמופיע בנתיב ה-URL */
   slug: string;
+  /** שם לתצוגה במערכת הניהול */
+  title: string;
   /** קידומת הטבלאות במסד */
   prefix: string;
-  /** אחרי כמה חיובים חוזרים שנכשלו ברציפות המנוי עובר ל-failed */
-  maxFailedAttempts: number;
-  /** כמה ימים אחרי next_charge_date ממתינים לעדכון חיוב לפני העברה ל-failed */
-  graceDays: number;
-  /** אחרי כמה שעות רכישה שלא שולמה (pending) מבוטלת */
+  /** כמה שעות אחרי יצירת רכישה ממתינה עוד משייכים אליה תשלום לפי טלפון וסכום */
   pendingTtlHours: number;
 }
 
@@ -17,9 +15,8 @@ export interface TenantConfig {
  */
 const TENANTS: Record<string, Omit<TenantConfig, "slug">> = {
   "zeevi-weiss": {
+    title: "זאבי וייס",
     prefix: "zeevi_weiss_",
-    maxFailedAttempts: 3,
-    graceDays: 5,
     pendingTtlHours: 24,
   },
 };

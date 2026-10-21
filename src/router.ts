@@ -1,3 +1,5 @@
+import adminHtml from "./admin/admin.html";
+import { handleAdminApi } from "./admin/api";
 import { TenantDb } from "./db/repo";
 import type { Env } from "./env";
 import { handleCourse } from "./ivr/course";
@@ -10,6 +12,12 @@ import { readFlatPayload } from "./payments/provider";
 import { resolveTenant } from "./tenants";
 import { parseYemotRequest } from "./yemot/request";
 
+/**
+ * תחיליות נתיב שה-Worker יכול להיות מחובר תחתן (למשל route של smti.uk/yemot-pay*).
+ * הבקשה מגיעה עם הנתיב המלא, ולכן מסירים את התחילית לפני הניתוב.
+ */
+const BASE_PATHS = ["/yemot-pay"];
+
 const IVR_HANDLERS: Record<string, (ctx: IvrContext) => Promise<Response>> = {
   course: handleCourse,
   product: handleProduct,
@@ -19,12 +27,36 @@ const ROUTE = /^\/(ivr|pay)\/([a-z0-9-]+)\/([a-z0-9-]+)\/?$/;
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  if (url.pathname === "/health") return json({ ok: true });
-  if (request.method !== "GET" && request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+function splitBase(pathname: string): { base: string; path: string } {
+  for (const base of BASE_PATHS) {
+    if (pathname === base || pathname.startsWith(`${base}/`)) return { base, path: pathname.slice(base.length) || "/" };
+  }
+  return { base: "", path: pathname };
+}
 
-  const match = ROUTE.exec(url.pathname);
+export async function handleRequest(request: Request, env: Env): Promise<Response> {
+  const { base, path } = splitBase(new URL(request.url).pathname);
+  if (request.method !== "GET" && request.method !== "POST" && request.method !== "PUT" && request.method !== "DELETE") {
+    return json({ error: "method_not_allowed" }, 405);
+  }
+
+  if (path === "/health") return json({ ok: true });
+  if (path === "/" || path === "/admin") return Response.redirect(new URL(`${base}/admin/`, request.url).toString(), 302);
+  if (path === "/admin/") {
+    return new Response(adminHtml, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "x-frame-options": "DENY",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  }
+  if (path.startsWith("/admin/api/")) return handleAdminApi(request, env, path.slice("/admin/api".length), `${base}/admin`);
+
+  if (request.method !== "GET" && request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  const match = ROUTE.exec(path);
   if (!match) return json({ error: "not_found" }, 404);
   const [, area, tenantSlug, action] = match as unknown as [string, "ivr" | "pay", string, string];
 

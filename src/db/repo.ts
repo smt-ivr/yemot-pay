@@ -1,7 +1,7 @@
 import type { TenantConfig } from "../tenants";
 import { tablesFor, type Tables } from "./tables";
-import type { BillingType, Course, Customer, Order, PaymentStatus, Product, ProductType, Subscription } from "./types";
-import { addMonths, maskSensitive, todayIso } from "../lib/util";
+import type { Course, Customer, Order, PaymentStatus, Product, ProductType, Subscription } from "./types";
+import { addDays, maskSensitive, todayIso } from "../lib/util";
 
 export interface NewPayment {
   customerId: number;
@@ -69,10 +69,10 @@ export class TenantDb {
     return this.db.prepare(`SELECT * FROM ${this.t.courses} WHERE id = ?`).bind(id).first<Course>();
   }
 
-  createCourse(c: { name: string; ivrCode: string; billing: BillingType; price: number }): Promise<Course | null> {
+  createCourse(c: { name: string; ivrCode: string; price: number }): Promise<Course | null> {
     return this.db
-      .prepare(`INSERT INTO ${this.t.courses} (name, ivr_code, billing_type, price) VALUES (?, ?, ?, ?) RETURNING *`)
-      .bind(c.name, c.ivrCode, c.billing, c.price)
+      .prepare(`INSERT INTO ${this.t.courses} (name, ivr_code, billing_type, price) VALUES (?, ?, 'one_time', ?) RETURNING *`)
+      .bind(c.name, c.ivrCode, c.price)
       .first<Course>();
   }
 
@@ -190,29 +190,6 @@ export class TenantDb {
     return this.db.prepare(`SELECT * FROM ${this.t.orders} WHERE id = ?`).bind(id).first<Order>();
   }
 
-  /** מנוי שהחיוב החוזר שלו (הוראת קבע) מזוהה לפי מזהה אצל ספק הסליקה. */
-  findSubscriptionByToken(token: string): Promise<Subscription | null> {
-    return this.db
-      .prepare(`SELECT * FROM ${this.t.subscriptions} WHERE card_token = ? AND status IN ('active','paused','failed') ORDER BY id DESC LIMIT 1`)
-      .bind(token)
-      .first<Subscription>();
-  }
-
-  /** מנוי חודשי של הלקוח שמועד החיוב שלו הגיע (או קרוב), לזיהוי חיוב חוזר בלי מזהה הוראת קבע. */
-  findRenewableSubscriptions(customerId: number): Promise<Subscription[]> {
-    return this.db
-      .prepare(
-        `SELECT s.* FROM ${this.t.subscriptions} s
-         JOIN ${this.t.courses} c ON c.id = s.course_id
-         WHERE s.customer_id = ? AND s.status IN ('active','failed') AND c.billing_type = 'monthly'
-           AND s.next_charge_date IS NOT NULL AND s.next_charge_date <= date('now', '+3 days')
-         ORDER BY s.next_charge_date ASC`,
-      )
-      .bind(customerId)
-      .all<Subscription>()
-      .then((r) => r.results);
-  }
-
   // ---------- תשלומים ----------
 
   async paymentExists(provider: string, transactionId: string): Promise<boolean> {
@@ -245,43 +222,23 @@ export class TenantDb {
       );
   }
 
-  /** תשלום ראשון הצליח: מפעיל את המנוי. */
-  activateSubscription(sub: Subscription, billing: BillingType, recurringId: string | null, today = todayIso()): D1PreparedStatement {
-    const next = billing === "monthly" ? addMonths(today, 1) : null;
+  /** התשלום הצליח: המנוי פעיל מהיום, לצמיתות או לפי תוקף הקורס בימים. */
+  activateSubscription(subscriptionId: number, accessDays: number | null | undefined, today = todayIso()): D1PreparedStatement {
+    const end = accessDays && accessDays > 0 ? addDays(today, accessDays) : null;
     return this.db
       .prepare(
         `UPDATE ${this.t.subscriptions}
-         SET status = 'active', start_date = ?, next_charge_date = ?, failed_attempts = 0,
-             card_token = COALESCE(?, card_token), updated_at = datetime('now')
+         SET status = 'active', start_date = ?, end_date = ?, updated_at = datetime('now')
          WHERE id = ?`,
       )
-      .bind(today, next, recurringId, sub.id);
+      .bind(today, end, subscriptionId);
   }
 
-  /** חיוב חודשי חוזר הצליח: מקדם את מועד החיוב הבא ומחזיר ל-active. */
-  renewSubscription(sub: Subscription, today = todayIso()): D1PreparedStatement {
-    let next = addMonths(sub.next_charge_date ?? today, 1);
-    if (next <= today) next = addMonths(today, 1);
+  /** התשלום נכשל: הרכישה הממתינה מסומנת failed. המתקשר יכול להיכנס שוב ולרכוש מחדש. */
+  markSubscriptionFailed(subscriptionId: number): D1PreparedStatement {
     return this.db
-      .prepare(
-        `UPDATE ${this.t.subscriptions}
-         SET status = 'active', next_charge_date = ?, failed_attempts = 0, updated_at = datetime('now')
-         WHERE id = ?`,
-      )
-      .bind(next, sub.id);
-  }
-
-  /** חיוב נכשל: מגדיל את המונה, ומנוי פעיל שעבר את המקסימום עובר ל-failed. */
-  recordSubscriptionFailure(sub: Subscription): D1PreparedStatement {
-    return this.db
-      .prepare(
-        `UPDATE ${this.t.subscriptions}
-         SET failed_attempts = failed_attempts + 1,
-             status = CASE WHEN status = 'active' AND failed_attempts + 1 >= ? THEN 'failed' ELSE status END,
-             updated_at = datetime('now')
-         WHERE id = ?`,
-      )
-      .bind(this.tenant.maxFailedAttempts, sub.id);
+      .prepare(`UPDATE ${this.t.subscriptions} SET status = 'failed', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`)
+      .bind(subscriptionId);
   }
 
   markOrderPaid(orderId: number): D1PreparedStatement {
@@ -290,32 +247,9 @@ export class TenantDb {
       .bind(orderId);
   }
 
-  // ---------- תחזוקה יומית ----------
-
-  async cancelStalePending(): Promise<{ subscriptions: number; orders: number }> {
-    const ttl = `-${this.tenant.pendingTtlHours} hours`;
-    const [subs, orders] = await this.db.batch([
-      this.db
-        .prepare(`UPDATE ${this.t.subscriptions} SET status = 'cancelled', updated_at = datetime('now') WHERE status = 'pending' AND created_at < datetime('now', ?)`)
-        .bind(ttl),
-      this.db
-        .prepare(`UPDATE ${this.t.orders} SET status = 'cancelled', updated_at = datetime('now') WHERE status = 'pending' AND created_at < datetime('now', ?)`)
-        .bind(ttl),
-    ]);
-    return { subscriptions: subs!.meta.changes, orders: orders!.meta.changes };
-  }
-
-  /** מנויים חודשיים שעבר מועד החיוב שלהם + ימי חסד ולא התקבל חיוב מוצלח. */
-  failOverdueSubscriptions(): Promise<{ id: number; customer_id: number; next_charge_date: string }[]> {
+  markOrderCancelled(orderId: number): D1PreparedStatement {
     return this.db
-      .prepare(
-        `UPDATE ${this.t.subscriptions}
-         SET status = 'failed', updated_at = datetime('now')
-         WHERE status = 'active' AND next_charge_date IS NOT NULL AND next_charge_date < date('now', ?)
-         RETURNING id, customer_id, next_charge_date`,
-      )
-      .bind(`-${this.tenant.graceDays} days`)
-      .all<{ id: number; customer_id: number; next_charge_date: string }>()
-      .then((r) => r.results);
+      .prepare(`UPDATE ${this.t.orders} SET status = 'cancelled', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`)
+      .bind(orderId);
   }
 }

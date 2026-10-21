@@ -12,17 +12,14 @@ export type Outcome =
   | "unmatched"
   | "amount_mismatch"
   | "subscription_activated"
-  | "subscription_renewed"
-  | "subscription_failed_attempt"
+  | "subscription_payment_failed"
   | "order_paid"
   | "order_payment_failed";
 
 /**
- * מאתר לאיזו רכישה שייך החיוב:
+ * מאתר לאיזו רכישה שייך התשלום:
  * 1. הפניה מפורשת (s123 / o45) אם הספק העביר אותה.
- * 2. מזהה הוראת קבע ששמור במנוי (חיוב חודשי חוזר).
- * 3. טלפון + סכום: הרכישה הממתינה האחרונה של הלקוח בסכום הזה,
- *    ואם אין - מנוי חודשי שמועד החיוב שלו הגיע באותו סכום.
+ * 2. טלפון + סכום: הרכישה הממתינה האחרונה של הלקוח בסכום הזה.
  */
 async function findTarget(db: TenantDb, ev: PaymentEvent): Promise<Target | null> {
   if (ev.reference) {
@@ -36,11 +33,6 @@ async function findTarget(db: TenantDb, ev: PaymentEvent): Promise<Target | null
     }
   }
 
-  if (ev.recurringId) {
-    const sub = await db.findSubscriptionByToken(ev.recurringId);
-    if (sub) return { kind: "subscription", sub, via: "recurring_id" };
-  }
-
   const phone = normalizePhone(ev.phone);
   if (!phone) return null;
   const customer = await db.findCustomerByPhone(phone);
@@ -52,10 +44,7 @@ async function findTarget(db: TenantDb, ev: PaymentEvent): Promise<Target | null
     ...orders.filter((o) => sameAmount(o.amount, ev.amount)).map((order) => ({ kind: "order" as const, order, via: "phone_amount" })),
   ];
   candidates.sort((a, b) => createdAt(b).localeCompare(createdAt(a)));
-  if (candidates[0]) return candidates[0];
-
-  const renewable = (await db.findRenewableSubscriptions(customer.id)).find((s) => sameAmount(s.price, ev.amount));
-  return renewable ? { kind: "subscription", sub: renewable, via: "phone_amount_renewal" } : null;
+  return candidates[0] ?? null;
 }
 
 function createdAt(t: Target): string {
@@ -76,14 +65,16 @@ export async function applyPaymentEvent(db: TenantDb, provider: string, ev: Paym
     return "unmatched";
   }
 
+  const ok = ev.status === "success";
   const base = {
     amount: ev.amount,
+    status: ev.status,
     provider,
     transactionId: ev.transactionId,
     cardLast4: ev.cardLast4,
     installments: ev.installments,
-    errorCode: ev.status === "failed" ? ev.errorCode : null,
-    errorMessage: ev.status === "failed" ? ev.errorMessage : null,
+    errorCode: ok ? null : ev.errorCode,
+    errorMessage: ok ? null : ev.errorMessage,
   };
 
   let outcome: Outcome;
@@ -92,41 +83,31 @@ export async function applyPaymentEvent(db: TenantDb, provider: string, ev: Paym
   if (target.kind === "order") {
     const { order } = target;
     details = { order_id: order.id, via: target.via };
-    if (ev.status === "success" && !sameAmount(order.amount, ev.amount)) {
-      await db.insertPayment({ ...base, customerId: order.customer_id, orderId: order.id, status: "success" }).run();
+    const payment = db.insertPayment({ ...base, customerId: order.customer_id, orderId: order.id });
+    if (ok && !sameAmount(order.amount, ev.amount)) {
+      await payment.run();
       outcome = "amount_mismatch";
-    } else if (ev.status === "success") {
-      await db.db.batch([
-        db.insertPayment({ ...base, customerId: order.customer_id, orderId: order.id, status: "success" }),
-        db.markOrderPaid(order.id),
-      ]);
+    } else if (ok) {
+      await db.db.batch([payment, db.markOrderPaid(order.id)]);
       outcome = "order_paid";
     } else {
-      await db.insertPayment({ ...base, customerId: order.customer_id, orderId: order.id, status: "failed" }).run();
+      await db.db.batch([payment, db.markOrderCancelled(order.id)]);
       outcome = "order_payment_failed";
     }
   } else {
     const { sub } = target;
     details = { subscription_id: sub.id, via: target.via };
-    const payment = { ...base, customerId: sub.customer_id, subscriptionId: sub.id };
-    const isFirstPayment = sub.status === "pending" || sub.status === "cancelled";
-
-    if (ev.status === "failed") {
-      await db.db.batch([db.insertPayment({ ...payment, status: "failed" }), db.recordSubscriptionFailure(sub)]);
-      outcome = "subscription_failed_attempt";
-    } else if (isFirstPayment && !sameAmount(sub.price, ev.amount)) {
-      await db.insertPayment({ ...payment, status: "success" }).run();
+    const payment = db.insertPayment({ ...base, customerId: sub.customer_id, subscriptionId: sub.id });
+    if (ok && !sameAmount(sub.price, ev.amount)) {
+      await payment.run();
       outcome = "amount_mismatch";
-    } else if (isFirstPayment) {
+    } else if (ok) {
       const course = await db.getCourse(sub.course_id);
-      await db.db.batch([
-        db.insertPayment({ ...payment, status: "success" }),
-        db.activateSubscription(sub, course?.billing_type ?? "monthly", ev.recurringId),
-      ]);
+      await db.db.batch([payment, db.activateSubscription(sub.id, course?.access_days)]);
       outcome = "subscription_activated";
     } else {
-      await db.db.batch([db.insertPayment({ ...payment, status: "success" }), db.renewSubscription(sub)]);
-      outcome = "subscription_renewed";
+      await db.db.batch([payment, db.markSubscriptionFailed(sub.id)]);
+      outcome = "subscription_payment_failed";
     }
   }
 

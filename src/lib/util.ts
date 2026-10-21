@@ -21,13 +21,11 @@ export function todayIso(now = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
-/** מוסיף חודשים לתאריך YYYY-MM-DD, עם הצמדה לסוף החודש (31/01 -> 28/02). */
-export function addMonths(isoDate: string, months: number): string {
-  const [y, m, d] = isoDate.split("-").map(Number) as [number, number, number];
-  const target = new Date(Date.UTC(y, m - 1 + months, 1));
-  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
-  target.setUTCDate(Math.min(d, lastDay));
-  return target.toISOString().slice(0, 10);
+/** מוסיף ימים לתאריך YYYY-MM-DD. */
+export function addDays(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 /** מסתיר רצפי ספרות ארוכים (מספרי כרטיס) ומשאיר 4 אחרונות. */

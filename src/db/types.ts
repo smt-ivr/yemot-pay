@@ -18,6 +18,8 @@ export interface Course {
   price: number;
   max_phones: number;
   is_active: number;
+  /** תוקף הגישה בימים מיום התשלום. NULL = לצמיתות */
+  access_days?: number | null;
 }
 
 export interface Product {
@@ -36,11 +38,8 @@ export interface Subscription {
   course_id: number;
   status: SubscriptionStatus;
   price: number;
-  card_token: string | null;
   start_date: string | null;
-  next_charge_date: string | null;
   end_date: string | null;
-  failed_attempts: number;
   created_at: string;
 }
 

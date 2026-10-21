@@ -4,13 +4,14 @@ import { EMPTY, V, exitFolder, failResponse, resolveCourse, restartResponse, typ
 
 /**
  * שלוחת קורס.
- * פרמטרים מהשלוחה (api_add): key, course, [price, name, billing, source], ok, pay, [exit], [mode=buy]
+ * פרמטרים מהשלוחה (api_add): key, course, [price, name, source], ok, pay, [exit], [mode=buy]
  *
  * 1. אם לטלפון המתקשר יש מנוי פעיל לקורס - מעבר לתיקיית התוכן (ok).
  * 2. אחרת: הצעה לרכוש (1) או לצאת (2).
  * 3. רכישה: טלפון ראשון, טלפון שני (אפשר לדלג), אישור.
  * 4. נוצר מנוי pending עם הטלפונים, והשיחה עוברת לשלוחת התשלום של נדרים פלוס (pay).
- *    המנוי מופעל רק כשמגיע עדכון תשלום מוצלח (payments/callback).
+ *    תשלום מוצלח -> המנוי פעיל (לצמיתות, או לפי access_days של הקורס).
+ *    תשלום שנכשל -> אין גישה, והמתקשר יכול להיכנס לשלוחה שוב ולנסות מחדש.
  *
  * mode=buy מדלג על בדיקת הגישה ועל התפריט - לשימוש כשתפריט ההצעה בנוי בימות.
  */
@@ -30,8 +31,7 @@ export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
   }
   const { item: course, price } = resolved;
   const caller = normalizePhone(req.phone);
-  const perMonth = course.billing_type === "monthly" ? [t("לחודש")] : [];
-  const offer: Part[] = [t(`מחיר הקורס ${course.name}`), ...priceParts(price), ...perMonth];
+  const offer: Part[] = [t(`מחיר הקורס ${course.name}`), ...priceParts(price)];
 
   // שלב 1: בדיקת גישה + תפריט
   const menu = req.get(V.menu);
@@ -95,7 +95,6 @@ export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
           t(`לאישור רכישת הקורס ${course.name}`),
           t("במחיר"),
           ...priceParts(price),
-          ...perMonth,
           t(phones.length > 1 ? "עבור הטלפונים" : "עבור הטלפון"),
           ...phoneParts,
           t("הקישו 1, לביטול הקישו 2"),

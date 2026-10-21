@@ -5,4 +5,6 @@ export interface Env {
    * מוגדר רק דרך `wrangler secret put TENANT_KEYS`.
    */
   TENANT_KEYS: string;
+  /** סיסמת מערכת הניהול. מוגדרת רק דרך `wrangler secret put ADMIN_PASSWORD`. */
+  ADMIN_PASSWORD: string;
 }

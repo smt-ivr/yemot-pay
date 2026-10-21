@@ -1,5 +1,5 @@
 import type { TenantDb } from "../db/repo";
-import type { BillingType, Course, Product, ProductType } from "../db/types";
+import type { Course, Product, ProductType } from "../db/types";
 import { parsePrice } from "../lib/util";
 import type { YemotRequest } from "../yemot/request";
 import { goToFolder, idListMessage, t, yemotResponse } from "../yemot/response";
@@ -57,8 +57,7 @@ export async function resolveCourse(db: TenantDb, req: YemotRequest): Promise<Re
 
   let course = await db.findCourse(ref);
   if (!course && source === "params") {
-    const billing: BillingType = req.get("billing") === "one_time" ? "one_time" : "monthly";
-    course = await db.createCourse({ name: req.get("name") ?? ref, ivrCode: ref, billing, price: paramPrice! });
+    course = await db.createCourse({ name: req.get("name") ?? ref, ivrCode: ref, price: paramPrice! });
   }
   if (!course) return { error: "course_not_found", message: "הקורס לא נמצא" };
   if (!course.is_active) return { error: "course_inactive", message: "הקורס אינו זמין כרגע" };
