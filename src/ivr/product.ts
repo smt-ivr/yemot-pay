@@ -7,8 +7,8 @@ import { PROVIDER, paymentCode, paymentNotCompleted, startPayment, transactionId
  * שלוחת רכישת מוצר / פגישה / פגישה טלפונית (type=api).
  * פרמטרים מהשלוחה (api_add): key, product, [ok, exit, price, name, type, source]
  *
- * בפגישה טלפונית נשאל גם טלפון ליצירת קשר. אחרי אישור נוצרת הזמנה pending והשרת עונה credit_card.
- * ימות קוראת שוב עם CreditCard_CODE: OK -> ההזמנה שולמה, אחרת -> בוטלה.
+ * בפגישה טלפונית נשאל גם טלפון ליצירת קשר. אחרי אישור השרת עונה credit_card.
+ * ימות קוראת שוב עם CreditCard_CODE: OK -> רק עכשיו נוצרים הרוכש, ההזמנה והתשלום. אחרת לא נוצר כלום.
  */
 export async function handleProduct({ db, req }: IvrContext): Promise<Response> {
   const resolved = await resolveProduct(db, req);
@@ -54,38 +54,21 @@ export async function handleProduct({ db, req }: IvrContext): Promise<Response> 
 
   const buyerPhone = caller ?? contact;
   if (!buyerPhone) return failResponse(req, "לא ניתן לזהות את מספר הטלפון");
-  const customer = await db.ensureCustomer(buyerPhone);
   const code = paymentCode(req);
-
   if (code === null) {
-    const orderId = await db.createPendingOrder(customer.id, product.id, price, contact);
-    await db.log(req.phone, req.callId, "purchase_pending", { order_id: orderId, product_id: product.id, price });
+    await db.log(req.phone, req.callId, "payment_started", { product_id: product.id, price });
     return startPayment(db, req, price);
+  }
+  if (code !== "OK") {
+    await db.log(req.phone, req.callId, "payment_not_completed", { product_id: product.id, code });
+    return paymentNotCompleted(req);
   }
 
   const tx = transactionId(req);
-  const done = () => yemotResponse(idListMessage([t("התשלום התקבל בהצלחה, תודה")]), goToFolder(req.get("ok") ?? exitFolder(req)));
-  if (code === "OK" && (await db.paymentExists(PROVIDER, tx))) return done();
-
-  const pending = (await db.findPendingOrders(customer.id)).find((o) => o.product_id === product.id);
-  if (!pending) {
-    await db.log(req.phone, req.callId, "payment_without_pending", { code, product_id: product.id });
-    return failResponse(req, code === "OK" ? "התשלום התקבל, אך אירעה תקלה ברישום. אנא פנו למשרד" : undefined);
+  if (!(await db.paymentExists(PROVIDER, tx))) {
+    const customer = await db.ensureCustomer(buyerPhone);
+    const orderId = await db.createPaidOrder({ customerId: customer.id, productId: product.id, amount: price, contactPhone: contact, payment: { provider: PROVIDER, transactionId: tx } });
+    await db.log(req.phone, req.callId, "payment_success", { order_id: orderId, product_id: product.id, price });
   }
-
-  if (code === "OK") {
-    await db.db.batch([
-      db.insertPayment({ customerId: customer.id, orderId: pending.id, amount: pending.amount, status: "success", provider: PROVIDER, transactionId: tx }),
-      db.markOrderPaid(pending.id),
-    ]);
-    await db.log(req.phone, req.callId, "payment_success", { order_id: pending.id, amount: pending.amount });
-    return done();
-  }
-
-  await db.db.batch([
-    db.insertPayment({ customerId: customer.id, orderId: pending.id, amount: pending.amount, status: "failed", provider: PROVIDER, transactionId: tx, errorCode: code }),
-    db.markOrderCancelled(pending.id),
-  ]);
-  await db.log(req.phone, req.callId, "payment_not_completed", { order_id: pending.id, code });
-  return paymentNotCompleted(req);
+  return yemotResponse(idListMessage([t("התשלום התקבל בהצלחה, תודה")]), goToFolder(req.get("ok") ?? exitFolder(req)));
 }

@@ -326,6 +326,7 @@
       customers: "למחוק את הרוכש? יימחקו גם כל המנויים, ההזמנות והתשלומים שלו.",
       subscriptions: "למחוק את המנוי? הטלפונים שלו יאבדו את הגישה לקורס. התשלומים יישמרו.",
       orders: "למחוק את ההזמנה? התשלומים יישמרו.",
+      payments: "למחוק את התשלום מהרשימה? (זה לא מבטל את העסקה בנדרים פלוס)",
     }[entity] ?? "למחוק?";
     if (!confirm(warn)) return false;
     try {
@@ -352,7 +353,7 @@
       const c = s.counts;
       const cards = [
         ["לקוחות", c.customers], ["קורסים פעילים", c.courses], ["מנויים פעילים", c.active_subscriptions],
-        ["ממתינים לתשלום", c.pending_subscriptions], ["הזמנות פתוחות", c.open_orders],
+        ["הזמנות פתוחות", c.open_orders],
         ["הכנסות 30 יום", money(c.revenue_30d)], ["הכנסות סה״כ", money(c.revenue_total)], ["תשלומים שנכשלו (30 יום)", c.failed_30d],
       ];
       main.innerHTML = `<div class="cards">${cards.map(([l, n]) => `<div class="panel card"><div class="lbl">${esc(l)}</div><div class="num">${esc(n)}</div></div>`).join("")}</div>
