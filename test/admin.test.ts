@@ -35,7 +35,8 @@ describe("admin", () => {
     expect(setCookie).toContain("HttpOnly");
     cookie = setCookie.split(";")[0]!;
     const meta = await api("/meta");
-    expect(meta.data.tenants).toEqual([{ slug: "zeevi-weiss", title: "זאבי וייס" }]);
+    expect(meta.data.tenants).toHaveLength(1);
+    expect(meta.data.tenants[0]).toMatchObject({ slug: "zeevi-weiss", title: "זאבי וייס", prefix: "zeevi_weiss_", api_key: "test-key-0123456789abcdef" });
   });
 
   it("rejects a forged cookie", async () => {
@@ -89,12 +90,12 @@ describe("admin", () => {
     expect(sub.start_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(sub.end_date).not.toBeNull();
 
-    const access = await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/course?key=test-key-0123456789abcdef&ApiPhone=0537654321&course=m10&ok=/1&pay=/2`);
-    expect(await access.text()).toBe("go_to_folder=/1");
+    const access = await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/check?ApiPhone=0537654321&course=m10`);
+    expect(await access.text()).toBe("OK");
 
     expect((await api(`/zeevi-weiss/subscriptions/${r.data.id}`, "PUT", { phones: "0521234567" })).status).toBe(200);
-    const after = await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/course?key=test-key-0123456789abcdef&ApiPhone=0537654321&course=m10&ok=/1&pay=/2`);
-    expect(await after.text()).toMatch(/^read=/);
+    const after = await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/check?ApiPhone=0537654321&course=m10`);
+    expect(await after.text()).toBe("Out");
 
     const detail = await api(`/zeevi-weiss/customers/${customerId}`);
     expect(detail.data.related.subscriptions).toHaveLength(1);
@@ -115,5 +116,38 @@ describe("admin", () => {
   it("requires JSON for changes", async () => {
     const res = await SELF.fetch(`${ORIGIN}/admin/api/zeevi-weiss/courses`, { method: "POST", headers: { cookie }, body: "name=x" });
     expect(res.status).toBe(415);
+  });
+
+  it("creates a new customer (tenant) with its own tables and key", async () => {
+    expect((await api("/tenants", "POST", { title: "כהן", slug: "Bad Slug!" })).status).toBe(400);
+    expect((await api("/tenants", "POST", { title: "כהן", slug: "cohen", nedarim_mosad_id: "12a" })).status).toBe(400);
+
+    const created = await api("/tenants", "POST", { title: "כהן ספרים", slug: "cohen", nedarim_mosad_id: "1234567", contact_name: "משה" });
+    expect(created.status).toBe(201);
+    expect(created.data.tenant).toMatchObject({ slug: "cohen", prefix: "cohen_", nedarim_mosad_id: "1234567" });
+    expect(created.data.tenant.api_key).toMatch(/^[0-9a-f]{32}$/);
+    expect((await api("/tenants", "POST", { title: "שוב", slug: "cohen" })).status).toBe(409);
+
+    // הטבלאות שלו נוצרו ועובדות
+    expect((await api("/cohen/courses", "POST", { name: "קורס", ivr_code: "k1", price: "50", is_active: true })).status).toBe(201);
+    expect((await api("/cohen/courses")).data.rows).toHaveLength(1);
+    expect((await api("/zeevi-weiss/courses?q=קורס")).data.rows).toHaveLength(0);
+
+    const key = created.data.tenant.api_key;
+    const offer = await SELF.fetch(`${ORIGIN}/ivr/cohen/course?key=${key}&ApiPhone=0521111111&ApiCallId=x&course=k1`);
+    expect(await offer.text()).toMatch(/^read=/);
+  });
+
+  it("updates a tenant and rotates its key", async () => {
+    expect((await api("/tenants/cohen", "PUT", { nedarim_mosad_id: "7654321", title: "כהן ובניו" })).status).toBe(200);
+    const list = (await api("/tenants")).data.rows;
+    const cohen = list.find((t: any) => t.slug === "cohen");
+    expect(cohen).toMatchObject({ title: "כהן ובניו", nedarim_mosad_id: "7654321" });
+
+    const rotated = await api("/tenants/cohen/key", "POST", {});
+    expect(rotated.data.api_key).toMatch(/^[0-9a-f]{32}$/);
+    expect(rotated.data.api_key).not.toBe(cohen.api_key);
+    const oldKey = await SELF.fetch(`${ORIGIN}/ivr/cohen/course?key=${cohen.api_key}&ApiPhone=0521111111&course=k1`);
+    expect(await oldKey.text()).toContain("השלוחה לא הוגדרה כראוי");
   });
 });

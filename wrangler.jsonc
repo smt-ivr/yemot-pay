@@ -8,10 +8,9 @@
     {
       "binding": "DB",
       "database_name": "yemot-pay",
-      "database_id": "dd8bf73b-6dca-446d-a929-e467025ceac7",
-      "migrations_dir": "migrations"
+      "database_id": "dd8bf73b-6dca-446d-a929-e467025ceac7"
     }
   ]
   // הנתיב https://smti.uk/yemot-pay* מחובר דרך Cloudflare (route).
-  // סודות (לא כאן!): wrangler secret put TENANT_KEYS / ADMIN_PASSWORD
+  // סוד (לא כאן!): wrangler secret put ADMIN_PASSWORD. מפתחות הלקוחות מנוהלים במערכת הניהול.
 }

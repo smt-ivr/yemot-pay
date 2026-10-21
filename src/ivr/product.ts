@@ -1,21 +1,16 @@
 import { normalizePhone } from "../lib/util";
 import { goToFolder, idListMessage, priceParts, readTap, t, yemotResponse } from "../yemot/response";
 import { V, exitFolder, failResponse, resolveProduct, restartResponse, type IvrContext } from "./common";
+import { PROVIDER, paymentCode, paymentNotCompleted, startPayment, transactionId } from "./payment";
 
 /**
- * שלוחת רכישת מוצר / פגישה / פגישה טלפונית.
- * פרמטרים מהשלוחה (api_add): key, product, [price, name, type, source], pay, [exit]
+ * שלוחת רכישת מוצר / פגישה / פגישה טלפונית (type=api).
+ * פרמטרים מהשלוחה (api_add): key, product, [ok, exit, price, name, type, source]
  *
- * בפגישה טלפונית נשאל גם טלפון ליצירת קשר. אחרי אישור נוצרת הזמנה pending,
- * והשיחה עוברת לשלוחת התשלום (pay). ההזמנה עוברת ל-paid כשמגיע עדכון תשלום מוצלח.
+ * בפגישה טלפונית נשאל גם טלפון ליצירת קשר. אחרי אישור נוצרת הזמנה pending והשרת עונה credit_card.
+ * ימות קוראת שוב עם CreditCard_CODE: OK -> ההזמנה שולמה, אחרת -> בוטלה.
  */
 export async function handleProduct({ db, req }: IvrContext): Promise<Response> {
-  const payFolder = req.get("pay");
-  if (!payFolder) {
-    await db.log(req.phone, req.callId, "config_error", { endpoint: "product", missing: "pay" });
-    return failResponse(req, "השלוחה לא הוגדרה כראוי");
-  }
-
   const resolved = await resolveProduct(db, req);
   if ("error" in resolved) {
     await db.log(req.phone, req.callId, resolved.error, { product: req.get("product") });
@@ -60,7 +55,37 @@ export async function handleProduct({ db, req }: IvrContext): Promise<Response> 
   const buyerPhone = caller ?? contact;
   if (!buyerPhone) return failResponse(req, "לא ניתן לזהות את מספר הטלפון");
   const customer = await db.ensureCustomer(buyerPhone);
-  const orderId = await db.createPendingOrder(customer.id, product.id, price, contact);
-  await db.log(req.phone, req.callId, "purchase_pending", { order_id: orderId, product_id: product.id, price });
-  return yemotResponse(idListMessage([t("מעבירים אותך לתשלום")]), goToFolder(payFolder));
+  const code = paymentCode(req);
+
+  if (code === null) {
+    const orderId = await db.createPendingOrder(customer.id, product.id, price, contact);
+    await db.log(req.phone, req.callId, "purchase_pending", { order_id: orderId, product_id: product.id, price });
+    return startPayment(db, req, price);
+  }
+
+  const tx = transactionId(req);
+  const done = () => yemotResponse(idListMessage([t("התשלום התקבל בהצלחה, תודה")]), goToFolder(req.get("ok") ?? exitFolder(req)));
+  if (code === "OK" && (await db.paymentExists(PROVIDER, tx))) return done();
+
+  const pending = (await db.findPendingOrders(customer.id)).find((o) => o.product_id === product.id);
+  if (!pending) {
+    await db.log(req.phone, req.callId, "payment_without_pending", { code, product_id: product.id });
+    return failResponse(req, code === "OK" ? "התשלום התקבל, אך אירעה תקלה ברישום. אנא פנו למשרד" : undefined);
+  }
+
+  if (code === "OK") {
+    await db.db.batch([
+      db.insertPayment({ customerId: customer.id, orderId: pending.id, amount: pending.amount, status: "success", provider: PROVIDER, transactionId: tx }),
+      db.markOrderPaid(pending.id),
+    ]);
+    await db.log(req.phone, req.callId, "payment_success", { order_id: pending.id, amount: pending.amount });
+    return done();
+  }
+
+  await db.db.batch([
+    db.insertPayment({ customerId: customer.id, orderId: pending.id, amount: pending.amount, status: "failed", provider: PROVIDER, transactionId: tx, errorCode: code }),
+    db.markOrderCancelled(pending.id),
+  ]);
+  await db.log(req.phone, req.callId, "payment_not_completed", { order_id: pending.id, code });
+  return paymentNotCompleted(req);
 }

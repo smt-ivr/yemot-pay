@@ -85,3 +85,16 @@ export function priceParts(price: number): Part[] {
   if (agorot > 0) parts.push(t("ו"), n(agorot), t("אגורות"));
   return parts;
 }
+
+/**
+ * מעבר לסליקת אשראי מתוך מודול API (ערכים לפי הסדר בתיעוד של ימות):
+ * סוג, סכום, מס' חנות, תשלומים, מטבע, סוג פלאקארד, משתמש, מספר טרמינל (בנדרים פלוס: מספר המוסד),
+ * סיסמה, all, טלפון, שם, ללא אישור, טוקן, GoBack.
+ * אחרי סליקה מוצלחת ימות קוראת שוב לאותה כתובת עם כל הערכים + CreditCard_CODE=OK.
+ * GoBack: הקשה על כוכבית בסליקה מחזירה אלינו עם CreditCard_CODE=GoBack (במקום לולאה).
+ */
+export function creditCard(o: { type: "nedarim_plus"; sum: number; terminal: string; tashloumim?: number }): string {
+  const sum = String(Math.round(o.sum * 100) / 100);
+  const terminal = o.terminal.replace(/\D/g, "");
+  return `credit_card=${[o.type, sum, "", o.tashloumim ?? 1, 1, "", "", terminal, "", "", "", "", "", "", "GoBack"].join(",")}`;
+}
