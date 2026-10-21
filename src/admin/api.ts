@@ -333,6 +333,9 @@ async function remove(db: TenantDb, entity: Entity & { name: EntityName }, id: n
       await q(`DELETE FROM ${t.products} WHERE id = ?`, id).run();
       break;
     }
+    case "payments":
+      await q(`DELETE FROM ${t.payments} WHERE id = ?`, id).run();
+      break;
     default:
       return error("לא ניתן למחוק", 405);
   }

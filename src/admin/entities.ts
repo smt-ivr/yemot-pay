@@ -260,6 +260,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
     search: () => ["c.full_name LIKE ?", "c.main_phone LIKE ?", "x.transaction_id LIKE ?"],
     filters: ["status", "customer_id", "subscription_id", "order_id"],
     noCreate: true,
+    deletable: true,
   },
 
   ivr_log: {

@@ -127,30 +127,37 @@ export class TenantDb {
 
   // ---------- רכישות ממתינות ----------
 
-  /** יוצר מנוי pending עם הטלפונים. רכישה ממתינה קודמת של אותו לקוח לאותו קורס מבוטלת. */
-  async createPendingSubscription(customerId: number, courseId: number, price: number, phones: string[]): Promise<number> {
-    await this.db
-      .prepare(
-        `UPDATE ${this.t.subscriptions} SET status = 'cancelled', updated_at = datetime('now')
-         WHERE customer_id = ? AND course_id = ? AND status = 'pending'`,
-      )
-      .bind(customerId, courseId)
-      .run();
-
+  /**
+   * תשלום הצליח: יוצר מנוי פעיל עם הטלפונים ורישום התשלום.
+   * לפני תשלום מוצלח לא נוצר כלום במסד.
+   */
+  async createPaidSubscription(o: {
+    customerId: number;
+    courseId: number;
+    price: number;
+    phones: string[];
+    accessDays: number | null | undefined;
+    payment: Omit<NewPayment, "customerId" | "subscriptionId" | "amount" | "status">;
+  }): Promise<number> {
+    const today = todayIso();
+    const end = o.accessDays && o.accessDays > 0 ? addDays(today, o.accessDays) : null;
     const sub = await this.db
-      .prepare(`INSERT INTO ${this.t.subscriptions} (customer_id, course_id, status, price) VALUES (?, ?, 'pending', ?) RETURNING id`)
-      .bind(customerId, courseId, price)
+      .prepare(
+        `INSERT INTO ${this.t.subscriptions} (customer_id, course_id, status, price, start_date, end_date)
+         VALUES (?, ?, 'active', ?, ?, ?) RETURNING id`,
+      )
+      .bind(o.customerId, o.courseId, o.price, today, end)
       .first<{ id: number }>();
     const id = sub!.id;
-
     try {
-      await this.db.batch(
-        phones.map((phone, i) =>
+      await this.db.batch([
+        ...o.phones.map((phone, i) =>
           this.db
             .prepare(`INSERT INTO ${this.t.subscription_phones} (subscription_id, phone, slot) VALUES (?, ?, ?)`)
             .bind(id, phone, i + 1),
         ),
-      );
+        this.insertPayment({ ...o.payment, customerId: o.customerId, subscriptionId: id, amount: o.price, status: "success" }),
+      ]);
     } catch (err) {
       await this.db.prepare(`DELETE FROM ${this.t.subscriptions} WHERE id = ?`).bind(id).run();
       throw err;
@@ -158,43 +165,25 @@ export class TenantDb {
     return id;
   }
 
-  async createPendingOrder(customerId: number, productId: number, amount: number, contactPhone: string | null): Promise<number> {
-    await this.db
-      .prepare(
-        `UPDATE ${this.t.orders} SET status = 'cancelled', updated_at = datetime('now')
-         WHERE customer_id = ? AND product_id = ? AND status = 'pending'`,
-      )
-      .bind(customerId, productId)
-      .run();
+  /** תשלום הצליח: יוצר הזמנה ששולמה ורישום התשלום. */
+  async createPaidOrder(o: {
+    customerId: number;
+    productId: number;
+    amount: number;
+    contactPhone: string | null;
+    payment: Omit<NewPayment, "customerId" | "orderId" | "amount" | "status">;
+  }): Promise<number> {
     const row = await this.db
-      .prepare(`INSERT INTO ${this.t.orders} (customer_id, product_id, amount, status, contact_phone) VALUES (?, ?, ?, 'pending', ?) RETURNING id`)
-      .bind(customerId, productId, amount, contactPhone)
+      .prepare(`INSERT INTO ${this.t.orders} (customer_id, product_id, amount, status, contact_phone) VALUES (?, ?, ?, 'paid', ?) RETURNING id`)
+      .bind(o.customerId, o.productId, o.amount, o.contactPhone)
       .first<{ id: number }>();
+    try {
+      await this.insertPayment({ ...o.payment, customerId: o.customerId, orderId: row!.id, amount: o.amount, status: "success" }).run();
+    } catch (err) {
+      await this.db.prepare(`DELETE FROM ${this.t.orders} WHERE id = ?`).bind(row!.id).run();
+      throw err;
+    }
     return row!.id;
-  }
-
-  findPendingSubscriptions(customerId: number): Promise<Subscription[]> {
-    return this.db
-      .prepare(
-        `SELECT * FROM ${this.t.subscriptions}
-         WHERE customer_id = ? AND status = 'pending' AND created_at >= datetime('now', ?)
-         ORDER BY id DESC`,
-      )
-      .bind(customerId, `-${this.tenant.pendingTtlHours} hours`)
-      .all<Subscription>()
-      .then((r) => r.results);
-  }
-
-  findPendingOrders(customerId: number): Promise<Order[]> {
-    return this.db
-      .prepare(
-        `SELECT * FROM ${this.t.orders}
-         WHERE customer_id = ? AND status = 'pending' AND created_at >= datetime('now', ?)
-         ORDER BY id DESC`,
-      )
-      .bind(customerId, `-${this.tenant.pendingTtlHours} hours`)
-      .all<Order>()
-      .then((r) => r.results);
   }
 
   getSubscription(id: number): Promise<Subscription | null> {
@@ -235,36 +224,5 @@ export class TenantDb {
         p.errorCode ?? null,
         p.errorMessage ?? null,
       );
-  }
-
-  /** התשלום הצליח: המנוי פעיל מהיום, לצמיתות או לפי תוקף הקורס בימים. */
-  activateSubscription(subscriptionId: number, accessDays: number | null | undefined, today = todayIso()): D1PreparedStatement {
-    const end = accessDays && accessDays > 0 ? addDays(today, accessDays) : null;
-    return this.db
-      .prepare(
-        `UPDATE ${this.t.subscriptions}
-         SET status = 'active', start_date = ?, end_date = ?, updated_at = datetime('now')
-         WHERE id = ?`,
-      )
-      .bind(today, end, subscriptionId);
-  }
-
-  /** התשלום נכשל: הרכישה הממתינה מסומנת failed. המתקשר יכול להיכנס שוב ולרכוש מחדש. */
-  markSubscriptionFailed(subscriptionId: number): D1PreparedStatement {
-    return this.db
-      .prepare(`UPDATE ${this.t.subscriptions} SET status = 'failed', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`)
-      .bind(subscriptionId);
-  }
-
-  markOrderPaid(orderId: number): D1PreparedStatement {
-    return this.db
-      .prepare(`UPDATE ${this.t.orders} SET status = 'paid', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`)
-      .bind(orderId);
-  }
-
-  markOrderCancelled(orderId: number): D1PreparedStatement {
-    return this.db
-      .prepare(`UPDATE ${this.t.orders} SET status = 'cancelled', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`)
-      .bind(orderId);
   }
 }

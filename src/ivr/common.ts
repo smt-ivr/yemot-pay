@@ -68,7 +68,8 @@ function priceSource(req: YemotRequest): "db" | "params" {
 
 export type Resolved<T> = { item: T; price: number } | { error: string; message: string };
 
-export async function resolveCourse(db: TenantDb, req: YemotRequest): Promise<Resolved<Course>> {
+/** allowInactive: גם קורס לא פעיל (בבדיקת גישה - מי שכבר רכש ממשיך לקבל גישה). */
+export async function resolveCourse(db: TenantDb, req: YemotRequest, opts: { allowInactive?: boolean } = {}): Promise<Resolved<Course>> {
   const ref = req.get("course");
   if (!ref) return { error: "missing_course_param", message: "השלוחה לא הוגדרה כראוי" };
 
@@ -81,7 +82,7 @@ export async function resolveCourse(db: TenantDb, req: YemotRequest): Promise<Re
     course = await db.createCourse({ name: req.get("name") ?? ref, ivrCode: ref, price: paramPrice! });
   }
   if (!course) return { error: "course_not_found", message: "הקורס לא נמצא" };
-  if (!course.is_active) return { error: "course_inactive", message: "הקורס אינו זמין כרגע" };
+  if (!course.is_active && !opts.allowInactive) return { error: "course_inactive", message: `הקורס ${course.name} אינו זמין כרגע לרכישה` };
 
   return { item: course, price: source === "params" ? paramPrice! : course.price };
 }

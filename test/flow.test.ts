@@ -47,7 +47,7 @@ describe("purchase flow", () => {
 
   it("says there is no subscription and offers to buy", async () => {
     const r = await ivr("course", caller);
-    expect(r.body).toBe("read=t-אין לך מנוי לקורס גמרא עיון.t-לרכישה במחיר.n-100.t-שקלים.t-הקישו 1 ליציאה הקישו 2=yp_menu,no,1,1,7,No,no,no,,1.2,,,,");
+    expect(r.body).toBe("read=t-אין לך מנוי לקורס גמרא עיון.t-לרכישת גישה לקורס.t-במחיר.n-100.t-שקלים.t-הקישו 1 ליציאה הקישו 2=yp_menu,no,1,1,7,No,no,no,,1.2,,,,");
   });
 
   it("exits above the course extension when the caller presses 2", async () => {
@@ -78,8 +78,10 @@ describe("purchase flow", () => {
   it("goes straight to payment without a summary (course allows 2 phones)", async () => {
     const r = await ivr("course", { ...caller, yp_menu: "1", yp_phone1: "1", yp_more1: "1", yp_phone2: "0502222222" });
     expect(r.body).toBe(`credit_card=nedarim_plus,100,,1,1,,,${MOSAD},,,,,,,GoBack`);
-    const phones = await DB.prepare("SELECT phone FROM zeevi_weiss_subscription_phones ORDER BY slot").all();
-    expect(phones.results).toEqual([{ phone: "0501111111" }, { phone: "0502222222" }]);
+    // לפני תשלום מוצלח לא נשמר כלום
+    for (const table of ["customers", "subscriptions", "subscription_phones", "payments"]) {
+      expect((await DB.prepare(`SELECT count(*) AS n FROM zeevi_weiss_${table}`).first<{ n: number }>())!.n).toBe(0);
+    }
     expect(await check("0502222222")).toBe("Out");
   });
 
@@ -88,6 +90,10 @@ describe("purchase flow", () => {
     expect(r.body).toBe("id_list_message=t-רכשת בהצלחה את הקורס גמרא עיון&go_to_folder=/5");
     const sub = await DB.prepare("SELECT status, start_date, end_date FROM zeevi_weiss_subscriptions ORDER BY id DESC LIMIT 1").first();
     expect(sub).toEqual({ status: "active", start_date: todayIso(), end_date: null });
+    const phones = await DB.prepare("SELECT phone FROM zeevi_weiss_subscription_phones ORDER BY slot").all();
+    expect(phones.results).toEqual([{ phone: "0501111111" }, { phone: "0502222222" }]);
+    const customer = await DB.prepare("SELECT main_phone FROM zeevi_weiss_customers").all();
+    expect(customer.results).toEqual([{ main_phone: "0501111111" }]);
     expect(await check("0501111111")).toBe("OK");
     expect(await check("0502222222")).toBe("OK");
     expect(await check("0503333333")).toBe("Out");
@@ -106,11 +112,13 @@ describe("purchase flow", () => {
 });
 
 describe("payment not completed", () => {
-  it("gives no access on GoBack, and the caller can buy again", async () => {
+  it("creates nothing on a failed payment, and the caller can buy again", async () => {
     const base = { ApiPhone: "0508888888", ApiCallId: "call-2", ...course1, yp_menu: "1", yp_phone1: "1", yp_more1: "2" };
     expect((await ivr("course", base)).body).toMatch(/^credit_card=/);
     expect((await ivr("course", { ...base, CreditCard_CODE: "GoBack" })).body).toBe("id_list_message=t-התשלום לא הושלם&go_to_folder=/");
     expect(await check("0508888888")).toBe("Out");
+    expect(await DB.prepare("SELECT 1 FROM zeevi_weiss_customers WHERE main_phone = '0508888888'").first()).toBeNull();
+    expect(await DB.prepare("SELECT 1 FROM zeevi_weiss_payments WHERE transaction_id = 'yemot-call-2'").first()).toBeNull();
 
     const again = { ...base, ApiCallId: "call-3" };
     await ivr("course", again);
@@ -130,7 +138,7 @@ describe("validity and phone count from the course settings", () => {
   it("uses the DB price, says the validity, and sets the end date", async () => {
     await DB.prepare("INSERT INTO zeevi_weiss_courses (name, ivr_code, price, access_days, max_phones) VALUES ('הלכה', 'c2', 49.9, 30, 1)").run();
     const base = { ApiPhone: "0504444444", ApiCallId: "call-5", course: "c2" };
-    expect((await ivr("course", base)).body).toContain("n-49.t-שקלים.t-ו.n-90.t-אגורות");
+    expect((await ivr("course", base)).body).toContain("t-לרכישת גישה לקורס.t-למשך.n-30.t-ימים.t-במחיר.n-49.t-שקלים.t-ו.n-90.t-אגורות");
     // קורס עם טלפון אחד: אין שאלה על מספר נוסף
     expect((await ivr("course", { ...base, yp_menu: "1", yp_phone1: "1" })).body).toMatch(/^credit_card=nedarim_plus,49\.9,/);
     const r = await ivr("course", { ...base, yp_menu: "1", yp_phone1: "1", CreditCard_CODE: "OK" });
@@ -154,9 +162,20 @@ describe("validity and phone count from the course settings", () => {
     for (const p of ["0521000001", "0521000002", "0521000003"]) expect(await check(p, "c3")).toBe("OK");
   });
 
-  it("reports an unknown course", async () => {
-    expect((await ivr("course", { ApiPhone: "0504444444", course: "missing" })).body).toContain("go_to_folder=/");
-    expect(await check("0504444444", "missing")).toBe("ERROR");
+  it("explains an unknown course instead of returning silently to the main menu", async () => {
+    // check שולח לשלוחת הרכישה, והיא משמיעה את הסיבה
+    expect(await check("0504444444", "missing")).toBe("Out");
+    expect((await ivr("course", { ApiPhone: "0504444444", course: "missing" })).body).toBe("id_list_message=t-הקורס לא נמצא&go_to_folder=/");
+  });
+
+  it("explains an inactive course, and keeps access for those who already bought it", async () => {
+    await DB.prepare("UPDATE zeevi_weiss_courses SET is_active = 0 WHERE ivr_code = 'c1'").run();
+    expect(await check("0507070707")).toBe("Out");
+    expect((await ivr("course", { ApiPhone: "0507070707", course: "c1" })).body).toBe(
+      "id_list_message=t-הקורס גמרא עיון אינו זמין כרגע לרכישה&go_to_folder=/",
+    );
+    expect(await check("0501111111")).toBe("OK");
+    await DB.prepare("UPDATE zeevi_weiss_courses SET is_active = 1 WHERE ivr_code = 'c1'").run();
   });
 });
 

@@ -19,13 +19,10 @@ export interface TenantConfig {
   notes: string | null;
   is_active: number;
   created_at: string;
-  /** כמה שעות רכישה ממתינה תקפה */
-  pendingTtlHours: number;
 }
 
 export const SLUG_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const PREFIX_RE = /^[a-z][a-z0-9_]*_$/;
-const PENDING_TTL_HOURS = 24;
 
 export function prefixFromSlug(slug: string): string {
   return `${slug.replace(/-/g, "_")}_`;
@@ -36,9 +33,9 @@ export function generateKey(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function toConfig(row: Omit<TenantConfig, "pendingTtlHours">): TenantConfig {
+function toConfig(row: TenantConfig): TenantConfig {
   if (!SLUG_RE.test(row.slug) || !PREFIX_RE.test(row.prefix)) throw new Error(`Invalid tenant row: ${row.slug}`);
-  return { ...row, pendingTtlHours: PENDING_TTL_HOURS };
+  return row;
 }
 
 let ready: Promise<void> | null = null;
@@ -113,13 +110,13 @@ export async function setup(env: Env): Promise<void> {
 }
 
 export async function listTenants(db: D1Database): Promise<TenantConfig[]> {
-  const rows = await db.prepare("SELECT * FROM tenants ORDER BY id").all<Omit<TenantConfig, "pendingTtlHours">>();
+  const rows = await db.prepare("SELECT * FROM tenants ORDER BY id").all<TenantConfig>();
   return rows.results.map(toConfig);
 }
 
 export async function getTenant(db: D1Database, slug: string): Promise<TenantConfig | null> {
   if (!SLUG_RE.test(slug)) return null;
-  const row = await db.prepare("SELECT * FROM tenants WHERE slug = ?").bind(slug).first<Omit<TenantConfig, "pendingTtlHours">>();
+  const row = await db.prepare("SELECT * FROM tenants WHERE slug = ?").bind(slug).first<TenantConfig>();
   return row ? toConfig(row) : null;
 }
 

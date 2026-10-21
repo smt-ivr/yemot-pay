@@ -189,4 +189,12 @@ describe("admin", () => {
     expect(r.status).toBe(409);
     expect(r.data.error).toContain("פעיל");
   });
+
+  it("deletes a payment", async () => {
+    const customer = await api("/zeevi-weiss/customers", "POST", { main_phone: "0549999999" });
+    const row = await DB.prepare("INSERT INTO zeevi_weiss_payments (customer_id, amount, status) VALUES (?, 5, 'success') RETURNING id")
+      .bind(customer.data.id).first<{ id: number }>();
+    expect((await api(`/zeevi-weiss/payments/${row!.id}`, "DELETE", {})).status).toBe(200);
+    expect(await DB.prepare("SELECT 1 FROM zeevi_weiss_payments WHERE id = ?").bind(row!.id).first()).toBeNull();
+  });
 });
