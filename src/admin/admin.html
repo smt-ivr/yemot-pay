@@ -381,27 +381,40 @@
   function refresh() { view === "dashboard" ? renderDashboard() : loadList(); }
 
   function showExtension(course) {
-    const link = `${location.origin}${BASE}/ivr/${tenant}/course`;
-    const ini = [
-      "type=api",
-      `api_link=${link}`,
+    const api = `${location.origin}${BASE}/ivr/${tenant}`;
+    const code = course.ivr_code || course.id;
+    const content = [
+      "check_api=yes",
+      "check_api_every_entry=yes",
+      `api_link=${api}/check`,
       "api_add_0=key=KEY",
-      `api_add_1=course=${course.ivr_code || course.id}`,
-      "api_add_2=ok=/5/1",
-      "api_add_3=pay=/5/2",
-      "api_add_4=exit=/",
+      `api_add_1=course=${code}`,
+      "api_goto=/6",
+      "api_error_goto=/",
     ].join("\n");
+    const buy = [
+      "type=api",
+      `api_link=${api}/course`,
+      "api_add_0=key=KEY",
+      `api_add_1=course=${code}`,
+      "api_add_2=pay=/7",
+      "api_add_3=exit=/",
+    ].join("\n");
+    const block = (title, note, text, id) => `<p><b>${esc(title)}</b> <span class="muted">${note}</span></p>
+      <pre class="code">${esc(text)}</pre><button type="button" data-copy="${id}">העתקה</button>`;
     dlgForm.innerHTML = `
-      <div class="dlg-head"><span>הגדרת שלוחה: ${esc(course.name)}</span></div>
+      <div class="dlg-head"><span>הגדרת שלוחות: ${esc(course.name)}</span></div>
       <div class="dlg-body">
-        <p class="muted">יש להחליף: <b>KEY</b> במפתח של הלקוח, <b>ok</b> בתיקיית תוכן הקורס, <b>pay</b> בשלוחת הסליקה של נדרים פלוס לקורס הזה.
-          המחיר נלקח מהגדרות הקורס. כדי לקבוע מחיר מהשלוחה מוסיפים <code dir="ltr">api_add_5=price=100</code>.</p>
-        <pre class="code">${esc(ini)}</pre>
-        <p class="muted">כתובת לעדכוני תשלום מנדרים פלוס:</p>
+        <p class="muted">בדוגמה: תוכן הקורס בשלוחה 5, הרכישה בשלוחה 6, הסליקה של נדרים פלוס בשלוחה 7. יש להחליף את המספרים לפי המערכת, ואת <b>KEY</b> במפתח של הלקוח.</p>
+        ${block("1. שלוחת תוכן הקורס (5)", "– להוסיף להגדרות הקיימות של השלוחה. מי שאין לו גישה עובר לשלוחת הרכישה.", content, "content")}
+        ${block("2. שלוחת רכישה (6)", "– הצעה לרכישה, שני טלפונים, אישור, ומעבר לסליקה.", buy, "buy")}
+        <p style="margin-top:16px"><b>3. שלוחת הסליקה (7)</b> <span class="muted">– שלוחת נדרים פלוס עם מחיר הקורס (${esc(money(course.price))}). כתובת לעדכוני תשלום:</span></p>
         <pre class="code">${esc(`${location.origin}${BASE}/pay/${tenant}/nedarim?key=KEY`)}</pre>
+        <p class="muted">המחיר נלקח מהגדרות הקורס. כדי לקבוע אותו מהשלוחה מוסיפים לשלוחת הרכישה <code dir="ltr">api_add_4=price=100</code>.</p>
       </div>
-      <div class="dlg-foot"><button type="button" class="primary" id="copy">העתקה</button><button type="button" id="close">סגירה</button></div>`;
-    dlgForm.querySelector("#copy").onclick = () => navigator.clipboard?.writeText(ini).then(() => toast("הועתק"));
+      <div class="dlg-foot"><button type="button" class="primary" id="close">סגירה</button></div>`;
+    const texts = { content, buy };
+    dlgForm.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => navigator.clipboard?.writeText(texts[b.dataset.copy]).then(() => toast("הועתק")));
     dlgForm.querySelector("#close").onclick = () => dlg.close();
     if (!dlg.open) dlg.showModal();
   }

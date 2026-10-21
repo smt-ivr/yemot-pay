@@ -2,6 +2,7 @@ import adminHtml from "./admin/admin.html";
 import { handleAdminApi } from "./admin/api";
 import { TenantDb } from "./db/repo";
 import type { Env } from "./env";
+import { handleCheck } from "./ivr/check";
 import { handleCourse } from "./ivr/course";
 import { failResponse, type IvrContext } from "./ivr/common";
 import { handleProduct } from "./ivr/product";
@@ -19,6 +20,7 @@ import { parseYemotRequest } from "./yemot/request";
 const BASE_PATHS = ["/yemot-pay"];
 
 const IVR_HANDLERS: Record<string, (ctx: IvrContext) => Promise<Response>> = {
+  check: handleCheck,
   course: handleCourse,
   product: handleProduct,
 };
