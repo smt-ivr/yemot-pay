@@ -137,7 +137,7 @@
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding: 0 16px; overflow-x: auto; }
   .tabs button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 13px 14px; cursor: pointer; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
   .tabs button.active { color: var(--brand); border-bottom-color: var(--brand); }
-  .code { position: relative; background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 14px 16px 14px 90px; direction: ltr; text-align: left; font-size: 13px; white-space: pre-wrap; word-break: break-all; margin: 0 0 10px; }
+  .code { position: relative; background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 14px 96px 14px 16px; direction: ltr; text-align: left; font-size: 13px; white-space: pre-wrap; word-break: break-all; margin: 0 0 10px; }
   .code .copy { position: absolute; top: 8px; right: 8px; background: #1e293b; border: 1px solid #334155; color: #cbd5e1; }
   .code .copy:hover { background: #334155; }
   .step { display: flex; gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--border); }
@@ -330,7 +330,7 @@
       { group: "מכירות", key: "orders", label: "הזמנות", icon: "cart", show: canView("orders") },
       { group: "מכירות", key: "payments", label: "תשלומים", icon: "card", show: canView("payments") },
       { group: "מערכת", key: "ivr_log", label: "יומן שיחות", icon: "phone", show: canView("ivr_log") },
-      { group: "מערכת", key: "settings", label: "הגדרות ושלוחות", icon: "settings", show: canView("settings") },
+      { group: "מערכת", key: "settings", label: "הגדרות (ימות ומיילים)", icon: "settings", show: canView("settings") },
       { group: "מערכת", key: "guide", label: "מדריך הקמה", icon: "help", show: canView("settings") },
       { group: "ניהול הפלטפורמה", key: "tenants", label: "לקוחות והרשאות", icon: "building", show: isAdmin() },
       { group: "ניהול הפלטפורמה", key: "platform", label: "הגדרות מערכת", icon: "server", show: isAdmin() },
@@ -742,34 +742,51 @@
   }
   const tenantInfo = () => api(`/${tenant}/info`);
 
+  /** קבצי ההגדרות לימות - בדיוק מה שמעתיקים לקובץ ext.ini של כל שלוחה */
+  const yemotFiles = {
+    courseCheck: (t, code) => ["check_api=yes", "check_api_every_entry=yes", `api_link=${links(t, "check", code)}`, "api_goto=1", "api_error_goto=/"].join("\n"),
+    coursePurchase: (t, code) => ["type=api", `api_link=${links(t, "course", code)}`].join("\n"),
+    product: (t, code) => ["type=api", `api_link=${links(t, "product", code)}`].join("\n"),
+  };
+  const TYPE_NAME = { product: "מוצר", meeting: "פגישה", phone_meeting: "פגישה טלפונית" };
+
+  /** תיעוד מלא של קורס אחד: שתי השלוחות, שורה אחר שורה */
+  function courseDoc(t, c) {
+    const code = c.ivr_code || c.id;
+    return `
+      <div class="section-title" style="margin-top:4px">שלוחת הקורס</div>
+      <p class="muted" style="margin:0 0 8px">השלוחה שבה נמצא תוכן הקורס (בדרך כלל type=playfile). <b>מוסיפים</b> את השורות האלה לקובץ ext.ini שלה, בלי למחוק את מה שכבר יש בו:</p>
+      ${codeBlock(yemotFiles.courseCheck(t, code))}
+      <div class="section-title">תת-שלוחה 1 בתוך שלוחת הקורס (רכישה)</div>
+      <p class="muted" style="margin:0 0 8px">יוצרים בתוך שלוחת הקורס תיקייה בשם <b>1</b>, ובקובץ ext.ini שלה כותבים רק את זה:</p>
+      ${codeBlock(yemotFiles.coursePurchase(t, code))}
+      <table class="perm-table" style="margin-top:6px"><tbody>
+        <tr><td class="mono" dir="ltr">check_api=yes</td><td class="wrap">בכל כניסה לשלוחת הקורס, ימות שואלת את השרת אם למתקשר יש גישה</td></tr>
+        <tr><td class="mono" dir="ltr">check_api_every_entry=yes</td><td class="wrap">בודקים בכל כניסה, לא רק בראשונה</td></tr>
+        <tr><td class="mono" dir="ltr">api_link=…/check?…</td><td class="wrap">client=${esc(t.client_number)} – מספר הלקוח · course=${esc(code)} – מזהה הקורס</td></tr>
+        <tr><td class="mono" dir="ltr">api_goto=1</td><td class="wrap">מי שאין לו גישה (או שהתוקף נגמר / הקורס לא פעיל) עובר לתת-שלוחה 1, ושם שומע הסבר והצעה</td></tr>
+        <tr><td class="mono" dir="ltr">api_error_goto=/</td><td class="wrap">רק אם השרת לא זמין בכלל – חזרה לתפריט הראשי</td></tr>
+        <tr><td class="mono" dir="ltr">…/course?…&amp;key=</td><td class="wrap">שלוחת הרכישה. key הוא המפתח של הלקוח – מונע ממישהו מבחוץ "לאשר" רכישה בלי תשלום</td></tr>
+      </tbody></table>`;
+  }
+
   async function showExtension(course) {
     try {
       const t = await tenantInfo();
-      const code = course.ivr_code || course.id;
-      const content = ["check_api=yes", "check_api_every_entry=yes", `api_link=${links(t, "check", code)}`, "api_goto=1", "api_error_goto=/"].join("\n");
-      const buy = ["type=api", `api_link=${links(t, "course", code)}`].join("\n");
-      dialog(`הגדרת שלוחה · ${esc(course.name)}`, `
+      dialog(`הגדרה בימות · ${esc(course.name)}`, `
         ${t.nedarim_mosad_id ? "" : `<div class="notice">${icon("help")}<div>עדיין לא הוגדר מספר מוסד בנדרים פלוס. בלי זה הסליקה לא תעבוד.</div></div>`}
-        <div class="notice info">${icon("help")}<div>כל הפרמטרים כתובים בתוך הכתובת עצמה – אין צורך בשורות api_add. בדוגמה: שלוחת הקורס, ובתוכה תת-שלוחה 1 לרכישה.</div></div>
-        <div class="section-title" style="margin-top:6px">1. שלוחת הקורס</div>
-        <p class="muted" style="margin:0 0 8px">מוסיפים לשורות הקיימות (type=playfile וכו'). מי שאין לו מנוי בתוקף עובר לתת-שלוחה 1.</p>
-        ${codeBlock(content)}
-        <div class="section-title">2. תת-שלוחה 1 (רכישה)</div>
-        <p class="muted" style="margin:0 0 8px">הצעה לרכישה ב-${esc(money(course.price))}${course.access_days ? ` ל-${esc(course.access_days)} ימים` : ""}, עד ${esc(course.max_phones || 1)} טלפונים, סליקה, ובהצלחה חזרה לשלוחת הקורס.</p>
-        ${codeBlock(buy)}
-        <p class="muted" style="font-size:13px">רוצים שהעסקאות ייכנסו בנדרים תחת קטגוריה? הוסיפו לתת-שלוחה 1: <code dir="ltr">credit_card_category_nedarim_plus=שם</code>.
-        יציאה למקום אחר בהקשה 2: הוסיפו לסוף הכתובת <code dir="ltr">&amp;exit=/</code>.</p>`,
+        ${courseDoc(t, course)}`,
         `<button type="button" class="btn primary" data-close>סגירה</button>`);
     } catch (err) { toast(err.message, true); }
   }
 
-  // ---------- הגדרות (שלוחות + מיילים) ----------
+  // ---------- הגדרות (ימות + מיילים) ----------
   async function renderSettings(tab) {
     tab = tab || ls.get("yp_settings_tab") || "ivr";
-    setTitle("הגדרות ושלוחות", currentTenant()?.title || "");
+    setTitle("הגדרות", currentTenant()?.title || "");
     const main = document.getElementById("main");
     main.innerHTML = `<div class="card"><div class="tabs">
-        <button data-tab="ivr" class="${tab === "ivr" ? "active" : ""}">${icon("phone")} שלוחות בימות</button>
+        <button data-tab="ivr" class="${tab === "ivr" ? "active" : ""}">${icon("phone")} הגדרות לימות המשיח</button>
         <button data-tab="email" class="${tab === "email" ? "active" : ""}">${icon("mail")} מיילים</button></div>
       <div class="card-body" id="tab-body"><div class="empty">טוען…</div></div></div>`;
     main.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { ls.set("yp_settings_tab", b.dataset.tab); renderSettings(b.dataset.tab); });
@@ -778,36 +795,51 @@
     catch (err) { body.innerHTML = `<div class="err">${esc(err.message)}</div>`; }
   }
 
+  /** תיעוד מלא להעתקה לימות: כל קורס וכל מוצר עם הקבצים המדויקים, והסבר על הפרמטרים */
   async function renderIvrTab(body) {
     const t = await tenantInfo();
     const [courses, products] = await Promise.all([
       canView("courses") ? api(`/${tenant}/courses?limit=500`).then((r) => r.rows) : [],
       canView("products") ? api(`/${tenant}/products?limit=500`).then((r) => r.rows) : [],
     ]);
+    const allText = [
+      ...courses.flatMap((c) => {
+        const code = c.ivr_code || c.id;
+        return [`=== קורס: ${c.name} (מזהה קורס ${code}) ===`, "", "[שלוחת הקורס - להוסיף ל-ext.ini הקיים]", yemotFiles.courseCheck(t, code), "",
+          "[תת-שלוחה 1 בתוך שלוחת הקורס - ext.ini]", yemotFiles.coursePurchase(t, code), "", ""];
+      }),
+      ...products.flatMap((p) => [`=== ${TYPE_NAME[p.type] || "מוצר"}: ${p.name} (מזהה מוצר ${p.ivr_code || p.id}) ===`, "", "[שלוחת הרכישה - ext.ini]",
+        yemotFiles.product(t, p.ivr_code || p.id), "", ""]),
+    ].join("\n");
     body.innerHTML = `
       <div class="detail-grid" style="margin-bottom:18px">
-        <div><span>מספר לקוח</span><b style="font-size:22px">${esc(t.client_number)}</b></div>
+        <div><span>מספר לקוח (client)</span><b style="font-size:22px">${esc(t.client_number)}</b></div>
         <div><span>מספר מוסד בנדרים פלוס</span><b>${t.nedarim_mosad_id ? esc(t.nedarim_mosad_id) : `<span class="pill warn">לא הוגדר</span>`}</b></div>
-        <div style="grid-column:span 2"><span>מפתח לשלוחות רכישה</span><b class="mono" dir="ltr">${esc(t.api_key)}</b></div>
+        <div style="grid-column:span 2"><span>מפתח (key) לשלוחות רכישה</span><b class="mono" dir="ltr">${esc(t.api_key)}</b></div>
       </div>
+      ${t.nedarim_mosad_id ? "" : `<div class="notice">${icon("help")}<div>עדיין לא הוגדר מספר מוסד בנדרים פלוס – בלי זה הסליקה לא תעבוד.</div></div>`}
       <div class="notice info">${icon("help")}<div>
-        בכל כתובת יש <b>client</b> (מספר הלקוח) ו-<b>course</b> / <b>product</b> (קוד השלוחה של הקורס או המוצר).
-        בשלוחות רכישה יש גם <b>key</b> – מפתח שמונע ממישהו מבחוץ "לאשר" רכישה בלי תשלום.</div></div>
-      <div class="section-title">קורסים</div>
-      ${courses.length ? `<div class="card table-wrap"><table><thead><tr><th>קורס</th><th>בדיקת גישה (שלוחת הקורס)</th><th>רכישה (תת-שלוחה 1)</th><th></th></tr></thead><tbody>
-        ${courses.map((c) => `<tr><td><b>${esc(c.name)}</b><div class="muted">קוד ${esc(c.ivr_code || c.id)}</div></td>
-          <td class="wrap mono" dir="ltr">${esc(links(t, "check", c.ivr_code || c.id))}</td>
-          <td class="wrap mono" dir="ltr">${esc(links(t, "course", c.ivr_code || c.id))}</td>
-          <td class="actions"><button class="btn sm" data-ext="${c.id}">${icon("ext")} הגדרה מלאה</button></td></tr>`).join("")}</tbody></table></div>`
-        : `<div class="muted">עדיין אין קורסים.</div>`}
-      <div class="section-title">מוצרים ופגישות</div>
-      ${products.length ? `<div class="card table-wrap"><table><thead><tr><th>מוצר</th><th>שלוחת רכישה (type=api)</th><th></th></tr></thead><tbody>
-        ${products.map((p) => `<tr><td><b>${esc(p.name)}</b><div class="muted">קוד ${esc(p.ivr_code || p.id)}</div></td>
-          <td class="wrap mono" dir="ltr">${esc(links(t, "product", p.ivr_code || p.id))}</td>
-          <td class="actions"><button class="btn sm" data-copy="${esc(`type=api\napi_link=${links(t, "product", p.ivr_code || p.id)}`)}">${icon("copy")} העתקה</button></td></tr>`).join("")}</tbody></table></div>`
-        : `<div class="muted">עדיין אין מוצרים או פגישות.</div>`}`;
+        לכל קורס יש <b>שתי שלוחות</b>: שלוחת הקורס (התוכן), ובתוכה תת-שלוחה <b>1</b> לרכישה. לכל מוצר או פגישה יש <b>שלוחה אחת</b>.
+        מעתיקים כל בלוק לקובץ ext.ini של השלוחה המתאימה, בדיוק כמו שהוא. כל הנתונים כבר בתוך הכתובות – לא צריך api_add.</div></div>
+      ${courses.length + products.length ? `<button type="button" class="btn" data-copy="${esc(allText)}">${icon("copy")} העתקת הכל (קובץ טקסט אחד)</button>` : ""}
+      ${courses.map((c) => `<div class="card" style="margin-top:16px"><div class="card-head">${icon("book")}<h3>${esc(c.name)}</h3>
+          <span class="pill">מזהה קורס ${esc(c.ivr_code || c.id)}</span>${c.is_active ? "" : `<span class="pill off">לא פעיל</span>`}</div>
+        <div class="card-body">${courseDoc(t, c)}</div></div>`).join("") || `<div class="muted" style="margin-top:16px">עדיין אין קורסים.</div>`}
+      ${products.map((p) => `<div class="card" style="margin-top:16px"><div class="card-head">${icon("box")}<h3>${esc(p.name)}</h3>
+          <span class="pill">${esc(TYPE_NAME[p.type] || "מוצר")} · מזהה מוצר ${esc(p.ivr_code || p.id)}</span></div>
+        <div class="card-body"><p class="muted" style="margin:0 0 8px">שלוחה חדשה (בכל מקום בתפריט), ובקובץ ext.ini שלה:</p>${codeBlock(yemotFiles.product(t, p.ivr_code || p.id))}
+          ${p.type === "phone_meeting" ? `<p class="muted" style="margin:0">המתקשר מתבקש גם טלפון לתיאום. אחרי התשלום נשלח מייל לפי הגדרות המיילים.</p>` : ""}</div></div>`).join("")}
+      <div class="section-title">פרמטרים אופציונליים (מוסיפים לסוף הכתובת)</div>
+      <div class="card table-wrap"><table><thead><tr><th>פרמטר</th><th>איפה</th><th>מה עושה</th><th>ברירת מחדל</th></tr></thead><tbody>
+        <tr><td class="mono" dir="ltr">&amp;exit=/</td><td>רכישה</td><td class="wrap">לאן לצאת בהקשה 2, אם התשלום לא הושלם או בתקלה</td><td class="wrap">השלוחה שמעל שלוחת הקורס</td></tr>
+        <tr><td class="mono" dir="ltr">&amp;ok=/5</td><td>רכישה</td><td class="wrap">לאן לעבור אחרי רכישה מוצלחת</td><td class="wrap">שלוחת הקורס (נכנסים לתוכן)</td></tr>
+        <tr><td class="mono" dir="ltr">&amp;deny=no</td><td>שלוחת הקורס</td><td class="wrap">למי שאין גישה תושמע הודעת המערכת "אין לכם הרשאה" לפני המעבר</td><td class="wrap">מעבר שקט, וההסבר בשלוחת הרכישה</td></tr>
+        <tr><td class="mono" dir="ltr">&amp;price=100</td><td>רכישה</td><td class="wrap">מחיר שונה מהמחיר שבהגדרות הקורס / המוצר</td><td class="wrap">המחיר מהגדרות הקורס</td></tr>
+      </tbody></table></div>
+      <div class="section-title">רשות: קטגוריה בנדרים פלוס</div>
+      <p class="muted">כדי שהעסקאות ייכנסו בנדרים תחת קטגוריה, מוסיפים לקובץ ext.ini של שלוחת הרכישה שורה נוספת:</p>
+      ${codeBlock("credit_card_category_nedarim_plus=שם הקטגוריה")}`;
     bindCopy(body);
-    body.querySelectorAll("[data-ext]").forEach((b) => b.onclick = () => showExtension(courses.find((c) => String(c.id) === b.dataset.ext)));
   }
 
   async function renderEmailTab(body) {
@@ -905,7 +937,7 @@
       ${step(!!t.nedarim_mosad_id, "1. מספר מוסד בנדרים פלוס", `<p>הסליקה מתבצעת בנדרים פלוס דרך ימות המשיח, ולכן צריך את מספר המוסד שקיבלתם מנדרים פלוס.</p>
         <p>${t.nedarim_mosad_id ? `מוגדר: <b>${esc(t.nedarim_mosad_id)}</b>` : isAdmin() ? `עדיין לא מוגדר – <a href="#tenants" data-go="tenants">הגדירו בלקוחות והרשאות</a>.` : "עדיין לא מוגדר – מנהל המערכת מגדיר אותו."}</p>`)}
       ${step(courses.length > 0, "2. יצירת קורס", `<p>ב<a href="#courses" data-go="courses">קורסים</a> לוחצים "חדש" וממלאים:</p>
-        <p>• <b>שם</b> – מה שהמתקשר ישמע. • <b>קוד שלוחה</b> – מזהה קצר (למשל 1). • <b>מחיר</b>.<br>
+        <p>• <b>שם</b> – מה שהמתקשר ישמע. • <b>מזהה קורס</b> – מספר או מילה באנגלית (למשל 1), זה מה שנכתב בכתובת. • <b>מחיר</b>.<br>
         • <b>תוקף גישה בימים</b> – ריק = לצמיתות. • <b>כמה טלפונים לכל רכישה</b>.<br>
         • <b>פעיל</b> ו<b>מה קורה למי שרכש כשהקורס לא פעיל</b> – ממשיך לקבל גישה, או נחסם ושומע הסבר.</p>`)}
       ${step(false, "3. שלוחת הקורס בימות", `<p>בשלוחה שבה נמצא תוכן הקורס מוסיפים בדיקת הרשאה. מי שיש לו מנוי בתוקף ממשיך לתוכן, ומי שלא – עובר לתת-שלוחה 1:</p>
@@ -915,8 +947,8 @@
         <p class="muted">מה המתקשר ישמע: "אין לך מנוי לקורס…" או "תוקף המנוי הסתיים" ← הצעה עם מחיר (ותוקף אם יש) ← טלפונים: 1 וסולמית למספר שממנו התקשר, או הקשת מספר ואישור ←
         "להוספת מספר נוסף 1, להמשך 2" ← סליקה בנדרים פלוס ← "רכשת בהצלחה את הקורס" וחזרה לתוכן. אם התשלום לא הצליח – לא נשמר כלום.</p>`)}
       ${step(false, "5. מוצרים ופגישות (לא חובה)", `<p>ב<a href="#products" data-go="products">מוצרים ופגישות</a> יוצרים מוצר / פגישה / פגישה טלפונית, ובשלוחה בימות:</p>
-        ${codeBlock(["type=api", `api_link=${links(t, "product", "CODE")}`].join("\n"))}<p class="muted">מחליפים CODE בקוד השלוחה של המוצר. בפגישה טלפונית המתקשר מתבקש טלפון לתיאום, ואחרי התשלום נשלח מייל לפי ההגדרות.</p>`)}
-      ${step(email.resend_ready && !!email.settings.from_email, "6. מיילים", `<p>ב<a href="#settings" data-go="settings">הגדרות ושלוחות</a> ← מיילים: כתובת שולח (בדומיין שמאומת ב-Resend), נמענים, ומה לכתוב בכל אירוע.
+        <p>ההגדרה המדויקת לכל מוצר מופיעה ב<a href="#settings" data-go="settings">הגדרות ← הגדרות לימות המשיח</a>. בפגישה טלפונית המתקשר מתבקש טלפון לתיאום, ואחרי התשלום נשלח מייל לפי ההגדרות.</p>`)}
+      ${step(email.resend_ready && !!email.settings.from_email, "6. מיילים", `<p>ב<a href="#settings" data-go="settings">הגדרות</a> ← מיילים: כתובת שולח (בדומיין שמאומת ב-Resend), נמענים, ומה לכתוב בכל אירוע.
         ברירת המחדל: מייל על כל פגישה ופגישה טלפונית. יש כפתור "שליחת מייל בדיקה".</p>`)}
       ${step(false, "7. בדיקה בטלפון", `<p>מתקשרים, נכנסים לשלוחת הקורס, רוכשים בסכום קטן, ובודקים:</p>
         <p>• ב<a href="#ivr_log" data-go="ivr_log">יומן השיחות</a> רואים כל שלב (הצעה, תחילת תשלום, תשלום הצליח, מייל נשלח).<br>
@@ -1075,7 +1107,7 @@
         <div class="section-title">איך משיגים מפתח</div>
         <p>1. נכנסים ל-resend.com ← <b>API Keys</b> ← <b>Create API Key</b> (הרשאת Sending access מספיקה).<br>
         2. ב-<b>Domains</b> מוודאים שהדומיין שלכם במצב Verified.<br>3. מדביקים כאן את המפתח ושומרים.<br>
-        4. אצל כל לקוח: הגדרות ושלוחות ← מיילים ← כתובת שולח בדומיין הזה ← "שליחת מייל בדיקה".</p>
+        4. אצל כל לקוח: הגדרות ← מיילים ← כתובת שולח בדומיין הזה ← "שליחת מייל בדיקה".</p>
       </div></div>`;
       document.getElementById("save-platform").onclick = async () => {
         const key = document.getElementById("resend").value.trim();

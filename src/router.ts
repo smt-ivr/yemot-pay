@@ -6,7 +6,7 @@ import { handleCheck } from "./ivr/check";
 import { failResponse, type IvrContext } from "./ivr/common";
 import { handleCourse } from "./ivr/course";
 import { handleProduct } from "./ivr/product";
-import { ensurePlatform, getTenant, getTenantByClient, keyMatches, type TenantConfig } from "./tenants";
+import { ensurePlatform, getTenantByClient, keyMatches, type TenantConfig } from "./tenants";
 import { parseYemotRequest } from "./yemot/request";
 
 /**
@@ -15,16 +15,14 @@ import { parseYemotRequest } from "./yemot/request";
  */
 const BASE_PATHS = ["/yemot-pay"];
 
-/** שלוחות שמבצעות רכישה - דורשות את מפתח הלקוח (api_add_0=key=...), כי אליהן חוזר אישור הסליקה. */
+/** שלוחות שמבצעות רכישה - דורשות את מפתח הלקוח (key=... בכתובת), כי אליהן חוזר אישור הסליקה. */
 const IVR_HANDLERS: Record<string, (ctx: IvrContext) => Promise<Response>> = {
   course: handleCourse,
   product: handleProduct,
 };
 
-/** /ivr/check?client=1&course=5 - הלקוח לפי מספר לקוח בפרמטר */
+/** /ivr/check?client=1&course=5 - הלקוח לפי מספר הלקוח בפרמטר client */
 const IVR_ROUTE = /^\/ivr\/([a-z]+)\/?$/;
-/** הצורה הקודמת: /ivr/zeevi-weiss/check - נשארת לשלוחות שכבר הוגדרו כך */
-const IVR_LEGACY_ROUTE = /^\/ivr\/([a-z0-9-]+)\/([a-z0-9-]+)\/?$/;
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const text = (body: string) => new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
@@ -58,8 +56,6 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 
   const route = IVR_ROUTE.exec(path);
   if (route) return handleIvr(request, env, ctx, route[1]!, (req) => getTenantByClient(env.DB, req.get("client")));
-  const legacy = IVR_LEGACY_ROUTE.exec(path);
-  if (legacy) return handleIvr(request, env, ctx, legacy[2]!, () => getTenant(env.DB, legacy[1]!));
   return json({ error: "not_found" }, 404);
 }
 

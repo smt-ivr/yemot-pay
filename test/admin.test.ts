@@ -92,11 +92,11 @@ describe("admin", () => {
     expect(sub.start_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(sub.end_date).not.toBeNull();
 
-    const access = await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/check?ApiPhone=0537654321&course=m10`);
+    const access = await SELF.fetch(`${ORIGIN}/ivr/check?client=1&ApiPhone=0537654321&course=m10`);
     expect(await access.text()).toBe("OK");
 
     expect((await api(`/zeevi-weiss/subscriptions/${r.data.id}`, "PUT", { phones: "0521234567" })).status).toBe(200);
-    const after = await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/check?ApiPhone=0537654321&course=m10`);
+    const after = await SELF.fetch(`${ORIGIN}/ivr/check?client=1&ApiPhone=0537654321&course=m10`);
     expect(await after.text()).toBe("Out");
 
     const detail = await api(`/zeevi-weiss/customers/${customerId}`);
@@ -132,7 +132,7 @@ describe("admin", () => {
     expect((await api("/zeevi-weiss/courses?q=קורס")).data.rows).toHaveLength(0);
 
     const key = created.data.tenant.api_key;
-    const offer = await SELF.fetch(`${ORIGIN}/ivr/cohen/course?key=${key}&ApiPhone=0521111111&ApiCallId=x&course=k1`);
+    const offer = await SELF.fetch(`${ORIGIN}/ivr/course?client=2&key=${key}&ApiPhone=0521111111&ApiCallId=x&course=k1`);
     expect(await offer.text()).toMatch(/^read=/);
   });
 
@@ -145,7 +145,7 @@ describe("admin", () => {
     const rotated = await api("/tenants/cohen/key", "POST", {});
     expect(rotated.data.api_key).toMatch(/^[0-9a-f]{32}$/);
     expect(rotated.data.api_key).not.toBe(cohen.api_key);
-    const oldKey = await SELF.fetch(`${ORIGIN}/ivr/cohen/course?key=${cohen.api_key}&ApiPhone=0521111111&course=k1`);
+    const oldKey = await SELF.fetch(`${ORIGIN}/ivr/course?client=2&key=${cohen.api_key}&ApiPhone=0521111111&course=k1`);
     expect(await oldKey.text()).toContain("השלוחה לא הוגדרה כראוי");
   });
 
