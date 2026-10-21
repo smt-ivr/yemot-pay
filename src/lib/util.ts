@@ -18,8 +18,9 @@ export function sameAmount(a: number, b: number): boolean {
   return Math.abs(a - b) < 0.005;
 }
 
+/** התאריך של היום בישראל (YYYY-MM-DD) - לפיו מחושבים תוקפי מנויים */
 export function todayIso(now = new Date()): string {
-  return now.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
 
 /** מוסיף ימים לתאריך YYYY-MM-DD. */

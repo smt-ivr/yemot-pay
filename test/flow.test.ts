@@ -164,6 +164,27 @@ describe("course settings", () => {
     await DB.prepare("UPDATE zeevi_weiss_courses SET is_active = 1, on_inactive = 'keep' WHERE ivr_code = 'c1'").run();
   });
 
+  it("blocks access on the expiry date itself (Israel date)", async () => {
+    const sub = await DB.prepare("SELECT s.id FROM zeevi_weiss_subscriptions s JOIN zeevi_weiss_subscription_phones p ON p.subscription_id = s.id WHERE p.phone = '0501111111'").first<{ id: number }>();
+    await DB.prepare("UPDATE zeevi_weiss_subscriptions SET end_date = ? WHERE id = ?").bind(todayIso(), sub!.id).run();
+    expect(await check("0501111111")).toBe("Out");
+    expect((await ivr("course", { ApiPhone: "0501111111", ApiCallId: "call-x", ...course1 })).body).toContain("t-תוקף המנוי שלך לקורס גמרא עיון הסתיים");
+    await DB.prepare("UPDATE zeevi_weiss_subscriptions SET end_date = ? WHERE id = ?").bind(addDays(todayIso(), 1), sub!.id).run();
+    expect(await check("0501111111")).toBe("OK");
+    await DB.prepare("UPDATE zeevi_weiss_subscriptions SET end_date = NULL WHERE id = ?").bind(sub!.id).run();
+  });
+
+  it("a free course (price 0) is purchased right after the phones, without payment", async () => {
+    await DB.prepare("INSERT INTO zeevi_weiss_courses (name, ivr_code, price, max_phones) VALUES ('בדיקה', 'free', 0, 1)").run();
+    const base = { ApiPhone: "0531234567", ApiCallId: "call-free", course: "free" };
+    expect((await ivr("course", base)).body).toContain("t-לרכישת גישה לקורס.t-ללא תשלום.t-הקישו 1");
+    const r = await ivr("course", { ...base, yp_menu: "1", yp_phone1_1: "1" });
+    expect(r.body).toBe("id_list_message=t-רכשת בהצלחה את הקורס בדיקה&go_to_folder=/5");
+    expect(await check("0531234567", "free")).toBe("OK");
+    const pay = await DB.prepare("SELECT amount, provider FROM zeevi_weiss_payments WHERE transaction_id = 'yemot-call-free'").first();
+    expect(pay).toEqual({ amount: 0, provider: "free" });
+  });
+
   it("explains an unknown course", async () => {
     expect(await check("0504444444", "missing")).toBe("Out");
     expect((await ivr("course", { ApiPhone: "0504444444", course: "missing" })).body).toBe("id_list_message=t-הקורס לא נמצא&go_to_folder=/");

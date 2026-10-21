@@ -38,7 +38,7 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
     const intro = status === "expired" ? `תוקף המנוי שלך לקורס ${course.name} הסתיים` : `אין לך מנוי לקורס ${course.name}`;
     const duration: Part[] = course.access_days ? [t("למשך"), n(course.access_days), t("ימים")] : [];
     return yemotResponse(
-      readTap([t(intro), t("לרכישת גישה לקורס"), ...duration, t("במחיר"), ...priceParts(price), t("הקישו 1, ליציאה הקישו 2")], {
+      readTap([t(intro), t("לרכישת גישה לקורס"), ...duration, ...(price > 0 ? [t("במחיר")] : []), ...priceParts(price), t("הקישו 1, ליציאה הקישו 2")], {
         name: V.menu,
         max: 1,
         min: 1,
@@ -83,8 +83,9 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
     if (more !== "1") break;
   }
 
-  // 3. סליקה - עדיין לא נשמר כלום
-  const code = paymentCode(req);
+  // 3. סליקה - עדיין לא נשמר כלום. קורס במחיר 0 (לבדיקות) לא עובר לסליקה ונרכש מיד.
+  const free = price <= 0;
+  const code = free ? "OK" : paymentCode(req);
   if (code === null) {
     await db.log(req.phone, req.callId, "payment_started", { course_id: course.id, price, phones });
     return startPayment(db, req, price);
@@ -97,7 +98,7 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
   }
 
   const tx = transactionId(req);
-  if (!(await db.paymentExists(PROVIDER, tx))) {
+  if (!(await db.paymentExists(free ? "free" : PROVIDER, tx))) {
     const customer = await db.ensureCustomer(caller ?? phones[0]!);
     const subscriptionId = await db.createPaidSubscription({
       customerId: customer.id,
@@ -105,7 +106,7 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
       price,
       phones,
       accessDays: course.access_days,
-      payment: { provider: PROVIDER, transactionId: tx },
+      payment: { provider: free ? "free" : PROVIDER, transactionId: tx },
     });
     await db.log(req.phone, req.callId, "payment_success", { subscription_id: subscriptionId, course_id: course.id, price, phones });
     waitUntil(

@@ -27,7 +27,7 @@ export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise
   if (menu === null) {
     await db.log(req.phone, req.callId, "purchase_offer", { product_id: product.id });
     return yemotResponse(
-      readTap([t(`לרכישת ${product.name}`), t("במחיר"), ...priceParts(price), t("הקישו 1, ליציאה הקישו 2")], {
+      readTap([t(`לרכישת ${product.name}`), ...(price > 0 ? [t("במחיר")] : []), ...priceParts(price), t("הקישו 1, ליציאה הקישו 2")], {
         name: V.menu,
         max: 1,
         min: 1,
@@ -55,7 +55,8 @@ export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise
 
   const buyerPhone = caller ?? contact;
   if (!buyerPhone) return failResponse(req, "לא ניתן לזהות את מספר הטלפון");
-  const code = paymentCode(req);
+  const free = price <= 0;
+  const code = free ? "OK" : paymentCode(req);
   if (code === null) {
     await db.log(req.phone, req.callId, "payment_started", { product_id: product.id, price, contact });
     return startPayment(db, req, price);
@@ -66,9 +67,9 @@ export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise
   }
 
   const tx = transactionId(req);
-  if (!(await db.paymentExists(PROVIDER, tx))) {
+  if (!(await db.paymentExists(free ? "free" : PROVIDER, tx))) {
     const customer = await db.ensureCustomer(buyerPhone);
-    const orderId = await db.createPaidOrder({ customerId: customer.id, productId: product.id, amount: price, contactPhone: contact, payment: { provider: PROVIDER, transactionId: tx } });
+    const orderId = await db.createPaidOrder({ customerId: customer.id, productId: product.id, amount: price, contactPhone: contact, payment: { provider: free ? "free" : PROVIDER, transactionId: tx } });
     await db.log(req.phone, req.callId, "payment_success", { order_id: orderId, product_id: product.id, price });
     waitUntil(
       notify(

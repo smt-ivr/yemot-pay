@@ -84,7 +84,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
     fields: [
       { name: "name", label: "שם", type: "text", required: true },
       { name: "ivr_code", label: "מזהה קורס", type: "text", help: "מספר או מילה באנגלית (למשל 1 או gemara). זה מה שכותבים בכתובת בימות: course=המזהה" },
-      { name: "price", label: "מחיר", type: "real", required: true },
+      { name: "price", label: "מחיר", type: "real", required: true, help: "0 = ללא תשלום (לבדיקות): נרכש מיד, בלי סליקה" },
       { name: "access_days", label: "תוקף גישה (ימים)", type: "int", help: "ריק = לצמיתות. למשל 365 = שנה מיום הרכישה" },
       { name: "max_phones", label: "כמה טלפונים לכל רכישה", type: "int", help: "כמה מספרי טלפון הרוכש יכול לשייך לקורס" },
       yesNo("is_active", "פעיל (פתוח לרכישה)"),
@@ -124,7 +124,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
       { name: "type", label: "סוג", type: "enum", required: true, options: PRODUCT_TYPES },
       { name: "name", label: "שם", type: "text", required: true },
       { name: "ivr_code", label: "מזהה מוצר", type: "text", help: "מספר או מילה באנגלית (למשל 1 או meeting). זה מה שכותבים בכתובת בימות: product=המזהה" },
-      { name: "price", label: "מחיר", type: "real", required: true },
+      { name: "price", label: "מחיר", type: "real", required: true, help: "0 = ללא תשלום (לבדיקות): נרכש מיד, בלי סליקה" },
       { name: "duration_minutes", label: "משך (דקות)", type: "int" },
       yesNo("is_active", "פעיל"),
       { name: "description", label: "תיאור", type: "longtext", formOnly: true },
@@ -179,7 +179,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
       { name: "status", label: "סטטוס", type: "enum", required: true, options: SUB_STATUS },
       { name: "price", label: "מחיר", type: "real", required: true },
       { name: "start_date", label: "תאריך התחלה", type: "date" },
-      { name: "end_date", label: "תוקף עד", type: "date", help: "ריק = לצמיתות" },
+      { name: "end_date", label: "תאריך פקיעה", type: "date", help: "מהיום הזה כבר אין גישה. ריק = לצמיתות" },
     ],
     columns: [
       { name: "id", label: "#" },
@@ -190,7 +190,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
       { name: "status", label: "סטטוס" },
       { name: "price", label: "מחיר" },
       { name: "start_date", label: "התחלה" },
-      { name: "end_date", label: "תוקף עד" },
+      { name: "end_date", label: "פקיעה" },
     ],
     select: (t) =>
       `SELECT x.*, c.full_name AS customer_name, c.main_phone AS customer_phone, co.name AS course_name,
