@@ -110,6 +110,21 @@ export class TenantDb {
     return row !== null;
   }
 
+  /** מצב המנוי של טלפון לקורס: פעיל, פג תוקף, או אין מנוי. */
+  async courseAccessStatus(phone: string, courseId: number): Promise<"active" | "expired" | "none"> {
+    const row = await this.db
+      .prepare(
+        `SELECT (s.end_date IS NULL OR s.end_date >= date('now')) AS valid FROM ${this.t.subscription_phones} sp
+         JOIN ${this.t.subscriptions} s ON s.id = sp.subscription_id
+         WHERE sp.phone = ? AND s.course_id = ? AND s.status = 'active'
+         ORDER BY valid DESC LIMIT 1`,
+      )
+      .bind(phone, courseId)
+      .first<{ valid: number }>();
+    if (!row) return "none";
+    return row.valid ? "active" : "expired";
+  }
+
   // ---------- רכישות ממתינות ----------
 
   /** יוצר מנוי pending עם הטלפונים. רכישה ממתינה קודמת של אותו לקוח לאותו קורס מבוטלת. */

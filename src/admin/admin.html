@@ -70,6 +70,13 @@
   .muted { color: var(--muted); }
   #toast { position: fixed; bottom: 20px; left: 20px; background: #1d2330; color: #fff; padding: 10px 16px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   #toast.show { opacity: 1; }
+  #toast.error { background: var(--danger); }
+  td.actions { width: 1%; white-space: nowrap; text-align: left; }
+  td.actions button { padding: 4px 10px; font-size: 13px; margin-inline-start: 4px; }
+  .phones-list .phone-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .phones-list .phone-row button { flex: none; }
+  .ref-search { margin-bottom: 4px; }
+  nav .sep { flex: 1; }
   @media (max-width: 640px) { main { padding: 12px; } header { padding: 10px 12px; } }
 </style>
 </head>
@@ -93,10 +100,10 @@
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const money = (v) => v === null || v === undefined || v === "" ? "" : "₪" + Number(v).toLocaleString("he-IL", { maximumFractionDigits: 2 });
 
-  function toast(msg) {
+  function toast(msg, isError = false) {
     const el = document.getElementById("toast");
-    el.textContent = msg; el.classList.add("show");
-    clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2200);
+    el.textContent = msg; el.classList.add("show"); el.classList.toggle("error", isError);
+    clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), isError ? 6000 : 2200);
   }
 
   async function api(path, opts = {}) {
@@ -144,7 +151,8 @@
 
   // ---------- מסגרת ----------
   function renderShell() {
-    const tabs = [["tenants", "לקוחות"], ["dashboard", "לוח בקרה"], ...Object.entries(META.entities).map(([k, e]) => [k, e.label])];
+    const order = ["courses", "subscriptions", "customers", "products", "orders", "payments", "ivr_log"];
+    const tabs = [["dashboard", "לוח בקרה"], ...order.filter((k) => META.entities[k]).map((k) => [k, META.entities[k].label])];
     app.innerHTML = `
       <header>
         <h1>ניהול ימות פיי</h1>
@@ -153,7 +161,8 @@
         <div class="spacer"></div>
         <button id="logout">יציאה</button>
       </header>
-      <nav>${tabs.map(([k, l]) => `<a href="#${k}" data-view="${k}" class="${k === view ? "active" : ""}">${esc(l)}</a>`).join("")}</nav>
+      <nav>${tabs.map(([k, l]) => `<a href="#${k}" data-view="${k}" class="${k === view ? "active" : ""}">${esc(l)}</a>`).join("")}
+        <span class="sep"></span><a href="#tenants" data-view="tenants" class="${view === "tenants" ? "active" : ""}">⚙ ניהול לקוחות</a></nav>
       <main id="main"></main>`;
     document.getElementById("tenant").onchange = (e) => { tenant = e.target.value; localStorageSet("yp_tenant", tenant); go(view); };
     document.getElementById("logout").onclick = async () => { await api("/logout", { method: "POST", body: {} }).catch(() => {}); showLogin(); };
@@ -281,16 +290,51 @@
   }
 
   function table(entity, rows, columns, clickable = true) {
-    if (!rows.length) return `<div class="empty">אין נתונים</div>`;
+    if (!rows.length) return `<div class="empty">אין עדיין נתונים</div>`;
+    const e = META.entities[entity];
+    const canEdit = clickable && !e.readOnly;
+    const actions = (r) => !canEdit && entity !== "customers" ? "" : `<td class="actions">
+      ${entity === "courses" ? `<button type="button" data-act="ext">הגדרת שלוחה</button>` : ""}
+      ${entity === "customers" ? `<button type="button" data-act="open">כרטיס</button>` : ""}
+      <button type="button" data-act="edit">עריכה</button>
+      ${e.deletable ? `<button type="button" class="danger" data-act="del">מחיקה</button>` : ""}</td>`;
     return `<div class="table-wrap"><table>
-      <thead><tr>${columns.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead>
+      <thead><tr>${columns.map((c) => `<th>${esc(c.label)}</th>`).join("")}${canEdit || entity === "customers" ? "<th></th>" : ""}</tr></thead>
       <tbody>${rows.map((r) => `<tr data-id="${r.id}" data-entity="${entity}" class="${clickable ? "" : "static"}">${columns.map((c) =>
-        `<td class="${c.name === "details" ? "wrap" : ""}">${cell(entity, c.name, r)}</td>`).join("")}</tr>`).join("")}</tbody>
+        `<td class="${c.name === "details" ? "wrap" : ""}">${cell(entity, c.name, r)}</td>`).join("")}${actions(r)}</tr>`).join("")}</tbody>
     </table></div>`;
   }
 
-  function bindRows(root, onClick) {
-    root.querySelectorAll("tbody tr:not(.static)").forEach((tr) => tr.onclick = () => onClick(tr.dataset.entity, Number(tr.dataset.id)));
+  /** לחיצה על שורה פותחת אותה; כפתורי הפעולות בשורה (עריכה / מחיקה / שלוחה). */
+  function bindRows(root, onClick, onChange = refresh) {
+    root.querySelectorAll("tbody tr:not(.static)").forEach((tr) => {
+      const entity = tr.dataset.entity, id = Number(tr.dataset.id);
+      tr.onclick = (ev) => {
+        const act = ev.target.closest("[data-act]")?.dataset.act;
+        if (!act) return onClick(entity, id);
+        ev.stopPropagation();
+        if (act === "open") return showCustomer(id);
+        if (act === "edit") return openForm(entity, id, {}, onChange);
+        if (act === "ext") return api(`/${tenant}/courses/${id}`).then((r) => showExtension(r.row)).catch((err) => toast(err.message, true));
+        if (act === "del") return deleteRow(entity, id, onChange);
+      };
+    });
+  }
+
+  async function deleteRow(entity, id, onDone = refresh) {
+    const warn = {
+      customers: "למחוק את הרוכש? יימחקו גם כל המנויים, ההזמנות והתשלומים שלו.",
+      subscriptions: "למחוק את המנוי? הטלפונים שלו יאבדו את הגישה לקורס. התשלומים יישמרו.",
+      orders: "למחוק את ההזמנה? התשלומים יישמרו.",
+    }[entity] ?? "למחוק?";
+    if (!confirm(warn)) return false;
+    try {
+      await api(`/${tenant}/${entity}/${id}`, { method: "DELETE", body: {} });
+      delete refCache[tenant + entity];
+      toast("נמחק");
+      onDone();
+      return true;
+    } catch (err) { toast(err.message, true); return false; }
   }
 
   function openRow(entity, id) {
@@ -384,8 +428,12 @@
       case "bool": return `<div class="field check"><label><input type="checkbox" id="${id}" name="${f.name}" ${v === "" ? "checked" : v ? "checked" : ""}> ${esc(f.label)}</label></div>`;
       case "enum": control = `<select id="${id}" name="${f.name}">${f.required ? "" : `<option value=""></option>`}${f.options.map((o) =>
         `<option value="${esc(o.value)}" ${String(v) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`; break;
-      case "ref": control = `<select id="${id}" name="${f.name}"><option value="">בחרו…</option>${(opts[f.name] || []).map((o) =>
-        `<option value="${esc(o.value)}" ${String(v) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`; break;
+      case "ref": {
+        const options = (opts[f.name] || []).map((o) => `<option value="${esc(o.value)}" ${String(v) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("");
+        const search = (opts[f.name] || []).length > 8 ? `<input type="search" class="ref-search" data-for="${id}" placeholder="חיפוש…">` : "";
+        control = `${search}<select id="${id}" name="${f.name}"><option value="">בחרו…</option>${options}</select>`;
+        break;
+      }
       case "date": control = `<input type="date" id="${id}" name="${f.name}" value="${esc(v)}">`; break;
       case "datetime": control = `<input type="datetime-local" id="${id}" name="${f.name}" value="${esc(String(v).replace(" ", "T").slice(0, 16))}">`; break;
       case "int": case "real": control = `<input type="number" step="${f.type === "real" ? "0.01" : "1"}" min="0" id="${id}" name="${f.name}" value="${esc(v)}">`; break;
@@ -415,7 +463,8 @@
       for (const f of fields.filter((f) => f.type === "ref")) opts[f.name] = await refOptions(f.ref);
 
       const phonesField = entity === "subscriptions"
-        ? `<div class="field"><label>טלפונים עם גישה * (עד 2, מופרדים בפסיק)</label><input type="text" dir="ltr" name="phones" value="${esc((row.phone_list || preset.phone_list || []).join(", "))}"></div>` : "";
+        ? `<div class="field"><label>טלפונים עם גישה לקורס *</label><div class="phones-list" id="phones"></div>
+            <button type="button" id="add-phone">+ טלפון נוסף</button> <span class="help" id="phones-help"></span></div>` : "";
       const extBtn = entity === "courses" && id ? `<button type="button" id="ext">הגדרת שלוחה</button>` : "";
 
       dlgForm.innerHTML = `
@@ -429,12 +478,39 @@
           ${id && e.deletable ? `<button type="button" class="danger" id="del">מחיקה</button>` : ""}
         </div>`;
 
+      dlgForm.querySelectorAll(".ref-search").forEach((inp) => inp.oninput = () => {
+        const q = inp.value.trim().toLowerCase();
+        const sel = dlgForm.querySelector("#" + inp.dataset.for);
+        [...sel.options].forEach((o, i) => { if (i) o.hidden = q !== "" && !o.textContent.toLowerCase().includes(q); });
+        const first = [...sel.options].find((o, i) => i && !o.hidden);
+        if (q && first && (sel.selectedIndex <= 0 || sel.options[sel.selectedIndex].hidden)) { sel.value = first.value; sel.dispatchEvent(new Event("change")); }
+      });
+
       if (entity === "subscriptions") {
         const courseSel = dlgForm.querySelector('[name="course_id"]');
         const priceIn = dlgForm.querySelector('[name="price"]');
+        const box = dlgForm.querySelector("#phones");
+        const maxPhones = () => Number(opts.course_id.find((o) => o.value === courseSel.value)?.row.max_phones) || 1;
+        const sync = () => {
+          const n = box.querySelectorAll("input").length;
+          dlgForm.querySelector("#add-phone").disabled = n >= maxPhones();
+          dlgForm.querySelector("#phones-help").textContent = courseSel.value ? `עד ${maxPhones()} טלפונים לקורס הזה` : "";
+        };
+        const addPhone = (value = "") => {
+          const rowEl = document.createElement("div");
+          rowEl.className = "phone-row";
+          rowEl.innerHTML = `<input type="tel" dir="ltr" value="${esc(value)}" placeholder="05XXXXXXXX"><button type="button" class="danger" title="הסרה">✕</button>`;
+          rowEl.querySelector("button").onclick = () => { rowEl.remove(); if (!box.children.length) addPhone(); sync(); };
+          box.appendChild(rowEl);
+          sync();
+        };
+        const initial = row.phone_list || preset.phone_list || [];
+        (initial.length ? initial : [""]).forEach((p) => addPhone(p));
+        dlgForm.querySelector("#add-phone").onclick = () => addPhone();
         courseSel.onchange = () => {
           const c = opts.course_id.find((o) => o.value === courseSel.value);
           if (c && !priceIn.value) priceIn.value = c.row.price;
+          sync();
         };
       }
       if (entity === "orders") {
@@ -450,7 +526,7 @@
       dlgForm.querySelector("#save").onclick = async (ev) => {
         ev.preventDefault();
         const body = readForm(fields);
-        if (entity === "subscriptions") body.phones = dlgForm.querySelector('[name="phones"]').value;
+        if (entity === "subscriptions") body.phones = [...dlgForm.querySelectorAll("#phones input")].map((i) => i.value.trim()).filter(Boolean);
         try {
           await api(`/${tenant}/${entity}${id ? "/" + id : ""}`, { method: id ? "PUT" : "POST", body });
           delete refCache[tenant + entity];
@@ -460,13 +536,8 @@
       };
       const del = dlgForm.querySelector("#del");
       if (del) del.onclick = async () => {
-        if (!confirm("למחוק את הרשומה?")) return;
-        try {
-          await api(`/${tenant}/${entity}/${id}`, { method: "DELETE", body: {} });
-          delete refCache[tenant + entity];
-          dlg.close(); toast("נמחק");
-          onDone ? onDone() : refresh();
-        } catch (err) { dlgForm.querySelector("#form-err").textContent = err.message; }
+        dlg.close();
+        await deleteRow(entity, id, onDone ?? refresh);
       };
       const ext = dlgForm.querySelector("#ext");
       if (ext) ext.onclick = () => showExtension(row);
@@ -485,7 +556,7 @@
       "check_api_every_entry=yes",
       `api_link=${api}/check`,
       `api_add_0=course=${code}`,
-      "api_goto=/6",
+      "api_goto=1",
       "api_error_goto=/",
     ].join("\n");
     const buy = [
@@ -493,20 +564,18 @@
       `api_link=${api}/course`,
       `api_add_0=key=${t.api_key}`,
       `api_add_1=course=${code}`,
-      "api_add_2=ok=/5",
-      "api_add_3=exit=/",
     ].join("\n");
-    const block = (title, note, text, id) => `<p><b>${esc(title)}</b> <span class="muted">${note}</span></p>
+    const block = (title, note, text, id) => `<p><b>${esc(title)}</b><br><span class="muted">${note}</span></p>
       <pre class="code">${esc(text)}</pre><button type="button" data-copy="${id}">העתקה</button>`;
     dlgForm.innerHTML = `
       <div class="dlg-head"><span>הגדרת שלוחות: ${esc(course.name)}</span></div>
       <div class="dlg-body">
-        ${t.nedarim_mosad_id ? "" : `<p class="err">ללקוח ${esc(t.title)} עדיין לא הוגדר מספר מוסד בנדרים פלוס – יש להגדיר בלשונית "לקוחות", אחרת הסליקה לא תעבוד.</p>`}
-        <p class="muted">בדוגמה: תוכן הקורס בשלוחה 5 ושלוחת הרכישה 6. יש להחליף את מספרי השלוחות לפי המערכת.</p>
-        ${block("1. שלוחת תוכן הקורס (5)", "– להוסיף להגדרות הקיימות. מי שאין לו גישה עובר לשלוחת הרכישה.", content, "content")}
-        ${block("2. שלוחת רכישה (6)", `– הצעה לרכישה ב-${esc(money(course.price))}, שני טלפונים, אישור, סליקה בנדרים פלוס (מוסד ${esc(t.nedarim_mosad_id || "—")}), ובהצלחה מעבר לתוכן.`, buy, "buy")}
-        <p class="muted" style="margin-top:14px">אין צורך בשלוחת סליקה נפרדת: הסליקה מתבצעת מתוך שלוחת הרכישה.
-          לרישום העסקאות בנדרים תחת קטגוריה, מוסיפים לשלוחת הרכישה <code dir="ltr">credit_card_category_nedarim_plus=שם הקטגוריה</code>.</p>
+        ${t.nedarim_mosad_id ? "" : `<p class="err">ללקוח ${esc(t.title)} עדיין לא הוגדר מספר מוסד בנדרים פלוס (⚙ ניהול לקוחות). בלי זה הסליקה לא תעבוד.</p>`}
+        ${block("1. שלוחת הקורס", "מוסיפים לשורות הקיימות של השלוחה (type=playfile וכו'). מי שאין לו מנוי בתוקף עובר לתת-שלוחה 1.", content, "content")}
+        ${block("2. תת-שלוחה 1 בתוך שלוחת הקורס (רכישה)", `"אין לך מנוי" / "תוקף המנוי הסתיים", רכישה ב-${esc(money(course.price))}, טלפונים (עד ${esc(course.max_phones || 1)}), סליקה בנדרים פלוס, ובהצלחה חזרה לשלוחת הקורס.`, buy, "buy")}
+        <p class="muted" style="margin-top:14px">
+          ביציאה (הקשה 2) המתקשר חוזר לשלוחה שמעל שלוחת הקורס. אפשר לקבוע אחרת עם <code dir="ltr">api_add_2=exit=/</code>.<br>
+          לרישום העסקאות בנדרים תחת קטגוריה מוסיפים לתת-שלוחה 1: <code dir="ltr">credit_card_category_nedarim_plus=שם</code>.</p>
       </div>
       <div class="dlg-foot"><button type="button" class="primary" id="close">סגירה</button></div>`;
     const texts = { content, buy };
@@ -542,7 +611,7 @@
       document.getElementById("edit").onclick = () => openForm("customers", id, {}, reload);
       document.getElementById("add-sub").onclick = () => openForm("subscriptions", null, { customer_id: id, status: "active", phone_list: [row.main_phone] }, reload);
       document.getElementById("add-order").onclick = () => openForm("orders", null, { customer_id: id, status: "paid" }, reload);
-      ["r-subs", "r-orders", "r-pay"].forEach((bid) => bindRows(document.getElementById(bid), (ent, rid) => openForm(ent, rid, {}, reload)));
+      ["r-subs", "r-orders", "r-pay"].forEach((bid) => bindRows(document.getElementById(bid), (ent, rid) => openForm(ent, rid, {}, reload), reload));
     } catch (err) { main.innerHTML = `<div class="err">${esc(err.message)}</div>`; }
   }
 

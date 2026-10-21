@@ -1,4 +1,4 @@
-import { tenantTablesSql } from "./db/schema";
+import { phonesTableSql, tenantTablesSql } from "./db/schema";
 import type { Env } from "./env";
 
 /** לקוח של הפלטפורמה (למשל זאבי וייס). נשמר בטבלה tenants ומנוהל ממערכת הניהול. */
@@ -94,6 +94,21 @@ export async function setup(env: Env): Promise<void> {
     if (!exists) continue;
     const col = await db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = 'access_days'").bind(table).first();
     if (!col) await db.prepare(`ALTER TABLE ${table} ADD COLUMN access_days INTEGER`).run();
+
+    // בטבלה המקורית מותרים רק 2 טלפונים (slot IN (1,2)). בונים אותה מחדש בלי ההגבלה, עם כל הנתונים.
+    const phones = `${tenant.prefix}subscription_phones`;
+    const def = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").bind(phones).first<{ sql: string }>();
+    if (def && /slot IN \(1,\s*2\)/.test(def.sql)) {
+      const tmp = `${phones}_new`;
+      await db.batch([
+        db.prepare(`DROP TABLE IF EXISTS ${tmp}`),
+        db.prepare(phonesTableSql(tmp, tenant.prefix)),
+        db.prepare(`INSERT INTO ${tmp} (id, subscription_id, phone, slot, created_at) SELECT id, subscription_id, phone, slot, created_at FROM ${phones}`),
+        db.prepare(`DROP TABLE ${phones}`),
+        db.prepare(`ALTER TABLE ${tmp} RENAME TO ${phones}`),
+        db.prepare(`CREATE INDEX IF NOT EXISTS idx_${tenant.prefix}sub_phones_phone ON ${phones}(phone)`),
+      ]);
+    }
   }
 }
 

@@ -7,8 +7,10 @@ import { goToFolder, idListMessage, t, yemotResponse } from "../yemot/response";
 /** שמות הערכים שנאספים בשיחה. קידומת yp_ כדי לא להתנגש בערכים אחרים בשלוחה. */
 export const V = {
   menu: "yp_menu",
-  phone1: "yp_phone1",
-  phone2: "yp_phone2",
+  /** + מספר: yp_phone1, yp_phone2, ... */
+  phone: "yp_phone",
+  /** + מספר: yp_more1, ... - האם להוסיף טלפון נוסף */
+  more: "yp_more",
   contact: "yp_contact",
   confirm: "yp_confirm",
 } as const;
@@ -21,8 +23,27 @@ export interface IvrContext {
   req: YemotRequest;
 }
 
+function extensionPath(req: YemotRequest): string[] {
+  return req.extension.split("/").filter(Boolean);
+}
+
+/**
+ * יציאה: exit מהשלוחה, ואם לא הוגדר - שתי רמות למעלה (שלוחת הרכישה היא תת-שלוחה של שלוחת הקורס,
+ * ושלוחת הקורס תחזיר לכאן מי שאין לו גישה, לכן יוצאים אל מעליה).
+ */
 export function exitFolder(req: YemotRequest): string {
-  return req.get("exit") ?? "hangup";
+  const exit = req.get("exit");
+  if (exit) return exit;
+  const parts = extensionPath(req);
+  return parts.length >= 2 ? `/${parts.slice(0, -2).join("/")}` : "hangup";
+}
+
+/** אחרי רכישה מוצלחת: ok מהשלוחה, ואם לא הוגדר - שלוחת הקורס (רמה אחת למעלה). */
+export function afterPurchaseFolder(req: YemotRequest): string {
+  const ok = req.get("ok");
+  if (ok) return ok;
+  const parts = extensionPath(req);
+  return parts.length >= 1 ? `/${parts.slice(0, -1).join("/")}` : exitFolder(req);
 }
 
 export function failResponse(req: YemotRequest, message = "אירעה תקלה, נסו שוב מאוחר יותר"): Response {

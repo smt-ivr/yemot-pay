@@ -61,8 +61,7 @@ export async function handleAdminApi(request: Request, env: Env, path: string, c
     if (method === "PUT" && id !== null) return await update(db, entity, id, await request.json());
     if (method === "DELETE" && id !== null) {
       if (!entity.deletable) return error("לא ניתן למחוק", 405);
-      const res = await db.db.prepare(`DELETE FROM ${db.t[entity.table]} WHERE id = ?`).bind(id).run();
-      return res.meta.changes ? json({ ok: true }) : error("לא נמצא", 404);
+      return await remove(db, entity, id);
     }
     return error("פעולה לא נתמכת", 405);
   } catch (err) {
@@ -283,8 +282,61 @@ function parsePhones(raw: unknown): { phones: string[] } | { error: string } | n
     if (!p) return { error: `טלפון לא תקין: ${item}` };
     if (!phones.includes(p)) phones.push(p);
   }
-  if (phones.length > 2) return { error: "אפשר עד 2 טלפונים למנוי" };
   return { phones };
+}
+
+async function checkPhoneLimit(db: TenantDb, courseId: unknown, phones: string[]): Promise<string | null> {
+  const course = typeof courseId === "number" ? await db.getCourse(courseId) : null;
+  const max = Math.max(1, course?.max_phones ?? 1);
+  return phones.length > max ? `לקורס הזה אפשר עד ${max} טלפונים` : null;
+}
+
+/**
+ * מחיקה. תשלומים לא נמחקים עם מנוי/הזמנה - רק מנותקים מהם, כדי לשמור את היסטוריית התשלומים.
+ * מחיקת רוכש מוחקת את כל הנתונים שלו. קורס/מוצר שיש לו רכישות לא נמחק (אפשר לסמן כלא פעיל).
+ */
+async function remove(db: TenantDb, entity: Entity & { name: EntityName }, id: number): Promise<Response> {
+  const t = db.t;
+  const q = (sql: string, ...binds: unknown[]) => db.db.prepare(sql).bind(...binds);
+  const exists = await q(`SELECT 1 FROM ${t[entity.table]} WHERE id = ?`, id).first();
+  if (!exists) return error("לא נמצא", 404);
+
+  switch (entity.name) {
+    case "subscriptions":
+      await db.db.batch([
+        q(`UPDATE ${t.payments} SET subscription_id = NULL WHERE subscription_id = ?`, id),
+        q(`DELETE FROM ${t.subscription_phones} WHERE subscription_id = ?`, id),
+        q(`DELETE FROM ${t.subscriptions} WHERE id = ?`, id),
+      ]);
+      break;
+    case "orders":
+      await db.db.batch([q(`UPDATE ${t.payments} SET order_id = NULL WHERE order_id = ?`, id), q(`DELETE FROM ${t.orders} WHERE id = ?`, id)]);
+      break;
+    case "customers":
+      await db.db.batch([
+        q(`DELETE FROM ${t.payments} WHERE customer_id = ?`, id),
+        q(`DELETE FROM ${t.subscription_phones} WHERE subscription_id IN (SELECT id FROM ${t.subscriptions} WHERE customer_id = ?)`, id),
+        q(`DELETE FROM ${t.subscriptions} WHERE customer_id = ?`, id),
+        q(`DELETE FROM ${t.orders} WHERE customer_id = ?`, id),
+        q(`DELETE FROM ${t.customers} WHERE id = ?`, id),
+      ]);
+      break;
+    case "courses": {
+      const used = await q(`SELECT count(*) AS n FROM ${t.subscriptions} WHERE course_id = ?`, id).first<{ n: number }>();
+      if (used!.n > 0) return error(`לקורס יש ${used!.n} מנויים, לכן אי אפשר למחוק אותו. אפשר לבטל את הסימון "פעיל", או למחוק קודם את המנויים.`, 409);
+      await q(`DELETE FROM ${t.courses} WHERE id = ?`, id).run();
+      break;
+    }
+    case "products": {
+      const used = await q(`SELECT count(*) AS n FROM ${t.orders} WHERE product_id = ?`, id).first<{ n: number }>();
+      if (used!.n > 0) return error(`למוצר יש ${used!.n} הזמנות, לכן אי אפשר למחוק אותו. אפשר לבטל את הסימון "פעיל".`, 409);
+      await q(`DELETE FROM ${t.products} WHERE id = ?`, id).run();
+      break;
+    }
+    default:
+      return error("לא ניתן למחוק", 405);
+  }
+  return json({ ok: true });
 }
 
 function replacePhones(db: TenantDb, subscriptionId: number, phones: string[]): D1PreparedStatement[] {
@@ -317,6 +369,8 @@ async function create(db: TenantDb, entity: Entity & { name: EntityName }, body:
     if (p && "error" in p) return error(p.error);
     phones = p?.phones ?? [];
     if (phones.length === 0) return error("יש להזין לפחות טלפון אחד עם גישה");
+    const limit = await checkPhoneLimit(db, v.values.course_id, phones);
+    if (limit) return error(limit);
     await fillSubscriptionDates(db, v.values);
   }
 
@@ -348,6 +402,9 @@ async function update(db: TenantDb, entity: Entity & { name: EntityName }, id: n
     if (p && "error" in p) return error(p.error);
     if (p) {
       if (p.phones.length === 0) return error("יש להזין לפחות טלפון אחד עם גישה");
+      const courseId = v.values.course_id ?? (await db.getSubscription(id))?.course_id;
+      const limit = await checkPhoneLimit(db, courseId, p.phones);
+      if (limit) return error(limit);
       stmts.push(...replacePhones(db, id, p.phones));
     }
   }
