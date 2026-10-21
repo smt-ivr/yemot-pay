@@ -83,7 +83,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
     table: "courses",
     fields: [
       { name: "name", label: "שם", type: "text", required: true },
-      { name: "ivr_code", label: "קוד שלוחה", type: "text", help: "המזהה שנשלח מהשלוחה בפרמטר course" },
+      { name: "ivr_code", label: "מזהה קורס", type: "text", help: "מספר או מילה באנגלית (למשל 1 או gemara). זה מה שכותבים בכתובת בימות: course=המזהה" },
       { name: "price", label: "מחיר", type: "real", required: true },
       { name: "access_days", label: "תוקף גישה (ימים)", type: "int", help: "ריק = לצמיתות. למשל 365 = שנה מיום הרכישה" },
       { name: "max_phones", label: "כמה טלפונים לכל רכישה", type: "int", help: "כמה מספרי טלפון הרוכש יכול לשייך לקורס" },
@@ -103,7 +103,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
     columns: [
       { name: "id", label: "#" },
       { name: "name", label: "שם" },
-      { name: "ivr_code", label: "קוד שלוחה" },
+      { name: "ivr_code", label: "מזהה קורס" },
       { name: "price", label: "מחיר" },
       { name: "access_days", label: "תוקף (ימים)" },
       { name: "max_phones", label: "טלפונים" },
@@ -123,7 +123,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
     fields: [
       { name: "type", label: "סוג", type: "enum", required: true, options: PRODUCT_TYPES },
       { name: "name", label: "שם", type: "text", required: true },
-      { name: "ivr_code", label: "קוד שלוחה", type: "text", help: "המזהה שנשלח מהשלוחה בפרמטר product" },
+      { name: "ivr_code", label: "מזהה מוצר", type: "text", help: "מספר או מילה באנגלית (למשל 1 או meeting). זה מה שכותבים בכתובת בימות: product=המזהה" },
       { name: "price", label: "מחיר", type: "real", required: true },
       { name: "duration_minutes", label: "משך (דקות)", type: "int" },
       yesNo("is_active", "פעיל"),
@@ -133,7 +133,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
       { name: "id", label: "#" },
       { name: "type", label: "סוג" },
       { name: "name", label: "שם" },
-      { name: "ivr_code", label: "קוד שלוחה" },
+      { name: "ivr_code", label: "מזהה מוצר" },
       { name: "price", label: "מחיר" },
       { name: "duration_minutes", label: "משך" },
       { name: "is_active", label: "פעיל" },

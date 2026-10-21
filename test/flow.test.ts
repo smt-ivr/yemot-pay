@@ -49,9 +49,8 @@ describe("routing", () => {
     expect(await (await SELF.fetch(`${ORIGIN}/ivr/check?client=999&course=c1`)).text()).toBe("ERROR");
   });
 
-  it("still supports the old /ivr/zeevi-weiss/... links", async () => {
-    const res = await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/check?course=c1&ApiPhone=0503333333`);
-    expect(await res.text()).toBe("Out");
+  it("no longer answers the old /ivr/zeevi-weiss/... links", async () => {
+    expect((await SELF.fetch(`${ORIGIN}/ivr/zeevi-weiss/check?course=c1&ApiPhone=0503333333`)).status).toBe(404);
   });
 
   it("always answers Yemot in Yemot format, never JSON", async () => {
