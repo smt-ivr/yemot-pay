@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ניהול ימות פיי</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #fff; --text: #1d2330; --muted: #6b7280; --border: #e3e6eb;
+    --accent: #1f6feb; --accent-text: #fff; --danger: #c62828; --ok: #1b7f3b; --warn: #a15c00;
+    --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); font-size: 15px; }
+  button, input, select, textarea { font: inherit; }
+  button { cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 7px 14px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select, textarea { border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; background: #fff; color: var(--text); width: 100%; }
+  textarea { min-height: 80px; resize: vertical; }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .spacer { flex: 1; }
+  header select { width: auto; }
+  nav { display: flex; gap: 4px; padding: 0 20px; background: var(--panel); border-bottom: 1px solid var(--border); overflow-x: auto; }
+  nav a { padding: 10px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+  main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .toolbar input { max-width: 280px; }
+  .toolbar select { max-width: 200px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: right; padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td.wrap { white-space: normal; max-width: 380px; word-break: break-word; font-size: 13px; color: var(--muted); }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; background: #fafbfc; }
+  tbody tr:hover { background: #f3f7ff; cursor: pointer; }
+  tbody tr.static:hover { background: none; cursor: default; }
+  .pager { display: flex; gap: 10px; align-items: center; padding: 10px 12px; color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #eef0f3; }
+  .badge.active, .badge.success, .badge.paid, .badge.completed { background: #e3f4e8; color: var(--ok); }
+  .badge.pending, .badge.scheduled, .badge.paused { background: #fff3e0; color: var(--warn); }
+  .badge.failed, .badge.cancelled, .badge.refunded { background: #fdecea; color: var(--danger); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { padding: 14px 16px; }
+  .card .num { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .card .lbl { color: var(--muted); font-size: 13px; }
+  h2 { font-size: 17px; margin: 22px 0 10px; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+  dialog { border: none; border-radius: var(--radius); padding: 0; width: min(560px, 94vw); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .dlg-head { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; justify-content: space-between; }
+  .dlg-body { padding: 16px 18px; max-height: 70vh; overflow-y: auto; }
+  .dlg-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+  .dlg-foot .spacer { flex: 1; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .field .help { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .field.check label { display: flex; gap: 8px; align-items: center; color: var(--text); }
+  .field.check input { width: auto; }
+  .err { color: var(--danger); margin-top: 8px; min-height: 1em; }
+  pre.code { background: #f4f5f7; border: 1px solid var(--border); padding: 12px; border-radius: 6px; direction: ltr; text-align: left; white-space: pre-wrap; word-break: break-all; font-size: 13px; }
+  .login { max-width: 340px; margin: 12vh auto; padding: 28px; }
+  .login h1 { font-size: 20px; margin: 0 0 18px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 20px; padding: 16px; }
+  .detail-grid div span { display: block; font-size: 12px; color: var(--muted); }
+  .muted { color: var(--muted); }
+  #toast { position: fixed; bottom: 20px; left: 20px; background: #1d2330; color: #fff; padding: 10px 16px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  @media (max-width: 640px) { main { padding: 12px; } header { padding: 10px 12px; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<dialog id="dlg"><form method="dialog" id="dlg-form"></form></dialog>
+<div id="toast"></div>
+<script>
+(() => {
+  const BASE = location.pathname.replace(/\/admin(\/.*)?$/, "");
+  const API = BASE + "/admin/api";
+  const app = document.getElementById("app");
+  const dlg = document.getElementById("dlg");
+  const dlgForm = document.getElementById("dlg-form");
+  let META = null;
+  let tenant = null;
+  let view = "dashboard";
+  const state = { q: "", filters: {}, offset: 0 };
+  const PAGE = 50;
+
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const money = (v) => v === null || v === undefined || v === "" ? "" : "₪" + Number(v).toLocaleString("he-IL", { maximumFractionDigits: 2 });
+
+  function toast(msg) {
+    const el = document.getElementById("toast");
+    el.textContent = msg; el.classList.add("show");
+    clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2200);
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(API + path, {
+      method: opts.method || "GET",
+      headers: opts.body ? { "content-type": "application/json" } : {},
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      credentials: "same-origin",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && path !== "/login") { showLogin(); throw new Error("נדרשת התחברות"); }
+    if (!res.ok) throw new Error(data.error || "שגיאה");
+    return data;
+  }
+
+  // ---------- התחברות ----------
+  function showLogin() {
+    app.innerHTML = `<div class="panel login">
+      <h1>כניסה לניהול</h1>
+      <form id="login-form">
+        <div class="field"><label>סיסמה</label><input type="password" id="pw" autocomplete="current-password" required autofocus></div>
+        <button class="primary" style="width:100%">כניסה</button>
+        <div class="err" id="login-err"></div>
+      </form></div>`;
+    document.getElementById("login-form").onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await api("/login", { method: "POST", body: { password: document.getElementById("pw").value } });
+        start();
+      } catch (err) { document.getElementById("login-err").textContent = err.message; }
+    };
+  }
+
+  async function start() {
+    try { META = await api("/meta"); } catch { return; }
+    const saved = localStorageGet("yp_tenant");
+    tenant = META.tenants.some((t) => t.slug === saved) ? saved : META.tenants[0]?.slug;
+    const hash = location.hash.slice(1);
+    view = hash === "dashboard" || META.entities[hash] ? hash : "dashboard";
+    renderShell();
+  }
+
+  function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+  function localStorageSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+
+  // ---------- מסגרת ----------
+  function renderShell() {
+    const tabs = [["dashboard", "לוח בקרה"], ...Object.entries(META.entities).map(([k, e]) => [k, e.label])];
+    app.innerHTML = `
+      <header>
+        <h1>ניהול ימות פיי</h1>
+        <select id="tenant">${META.tenants.map((t) => `<option value="${esc(t.slug)}" ${t.slug === tenant ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select>
+        <div class="spacer"></div>
+        <button id="logout">יציאה</button>
+      </header>
+      <nav>${tabs.map(([k, l]) => `<a href="#${k}" data-view="${k}" class="${k === view ? "active" : ""}">${esc(l)}</a>`).join("")}</nav>
+      <main id="main"></main>`;
+    document.getElementById("tenant").onchange = (e) => { tenant = e.target.value; localStorageSet("yp_tenant", tenant); go(view); };
+    document.getElementById("logout").onclick = async () => { await api("/logout", { method: "POST", body: {} }).catch(() => {}); showLogin(); };
+    app.querySelectorAll("nav a").forEach((a) => a.onclick = (e) => { e.preventDefault(); go(a.dataset.view); });
+    go(view);
+  }
+
+  function go(v) {
+    view = v; state.q = ""; state.filters = {}; state.offset = 0;
+    history.replaceState(null, "", "#" + v);
+    app.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === v));
+    v === "dashboard" ? renderDashboard() : renderList();
+  }
+
+  // ---------- תצוגת ערכים ----------
+  function fieldOf(entity, name) { return META.entities[entity].fields.find((f) => f.name === name); }
+
+  function cell(entity, col, row) {
+    const v = row[col];
+    const f = fieldOf(entity, col);
+    if (col === "status" || f?.type === "enum") {
+      const label = f?.options?.find((o) => o.value === v)?.label ?? v;
+      return `<span class="badge ${esc(v)}">${esc(label)}</span>`;
+    }
+    if (col === "is_active") return v ? "✓" : "—";
+    if (["price", "amount"].includes(col)) return money(v);
+    if (col === "access_days") return v ? esc(v) : "לצמיתות";
+    if (col === "end_date" && entity === "subscriptions") return v ? esc(v) : (row.status === "active" ? "לצמיתות" : "");
+    return esc(v);
+  }
+
+  function table(entity, rows, columns, clickable = true) {
+    if (!rows.length) return `<div class="empty">אין נתונים</div>`;
+    return `<div class="table-wrap"><table>
+      <thead><tr>${columns.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((r) => `<tr data-id="${r.id}" data-entity="${entity}" class="${clickable ? "" : "static"}">${columns.map((c) =>
+        `<td class="${c.name === "details" ? "wrap" : ""}">${cell(entity, c.name, r)}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div>`;
+  }
+
+  function bindRows(root, onClick) {
+    root.querySelectorAll("tbody tr:not(.static)").forEach((tr) => tr.onclick = () => onClick(tr.dataset.entity, Number(tr.dataset.id)));
+  }
+
+  function openRow(entity, id) {
+    if (entity === "customers") return showCustomer(id);
+    if (META.entities[entity].readOnly) return;
+    openForm(entity, id);
+  }
+
+  // ---------- לוח בקרה ----------
+  async function renderDashboard() {
+    const main = document.getElementById("main");
+    main.innerHTML = `<div class="muted">טוען…</div>`;
+    try {
+      const s = await api(`/${tenant}/stats`);
+      const c = s.counts;
+      const cards = [
+        ["לקוחות", c.customers], ["קורסים פעילים", c.courses], ["מנויים פעילים", c.active_subscriptions],
+        ["ממתינים לתשלום", c.pending_subscriptions], ["הזמנות פתוחות", c.open_orders],
+        ["הכנסות 30 יום", money(c.revenue_30d)], ["הכנסות סה״כ", money(c.revenue_total)], ["תשלומים שנכשלו (30 יום)", c.failed_30d],
+      ];
+      main.innerHTML = `<div class="cards">${cards.map(([l, n]) => `<div class="panel card"><div class="lbl">${esc(l)}</div><div class="num">${esc(n)}</div></div>`).join("")}</div>
+        <h2>תשלומים אחרונים</h2><div class="panel">${table("payments", s.recentPayments, META.entities.payments.columns)}</div>`;
+      bindRows(main, openRow);
+    } catch (err) { main.innerHTML = `<div class="err">${esc(err.message)}</div>`; }
+  }
+
+  // ---------- רשימה ----------
+  async function renderList() {
+    const entity = view;
+    const e = META.entities[entity];
+    const main = document.getElementById("main");
+    const enumFilters = e.filters.map((name) => fieldOf(entity, name)).filter((f) => f && (f.type === "enum" || f.type === "bool"));
+    main.innerHTML = `
+      <div class="toolbar">
+        <input type="search" id="q" placeholder="חיפוש…" value="${esc(state.q)}">
+        ${enumFilters.map((f) => `<select data-filter="${f.name}"><option value="">${esc(f.label)}: הכל</option>${
+          (f.type === "bool" ? [{ value: "1", label: "כן" }, { value: "0", label: "לא" }] : f.options)
+            .map((o) => `<option value="${esc(o.value)}" ${state.filters[f.name] === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`).join("")}
+        <div style="flex:1"></div>
+        ${e.readOnly || e.noCreate ? "" : `<button class="primary" id="new">+ חדש</button>`}
+      </div>
+      <div class="panel" id="list"><div class="empty">טוען…</div></div>`;
+    let timer;
+    document.getElementById("q").oninput = (ev) => { clearTimeout(timer); timer = setTimeout(() => { state.q = ev.target.value; state.offset = 0; loadList(); }, 300); };
+    main.querySelectorAll("[data-filter]").forEach((s) => s.onchange = () => { state.filters[s.dataset.filter] = s.value; state.offset = 0; loadList(); });
+    const nb = document.getElementById("new");
+    if (nb) nb.onclick = () => openForm(entity, null);
+    loadList();
+  }
+
+  async function loadList() {
+    const entity = view;
+    const e = META.entities[entity];
+    const box = document.getElementById("list");
+    const params = new URLSearchParams({ limit: PAGE, offset: state.offset });
+    if (state.q) params.set("q", state.q);
+    for (const [k, v] of Object.entries(state.filters)) if (v !== "") params.set(k, v);
+    try {
+      const data = await api(`/${tenant}/${entity}?${params}`);
+      const to = Math.min(data.offset + data.rows.length, data.total);
+      box.innerHTML = table(entity, data.rows, e.columns, !e.readOnly || entity === "customers") +
+        `<div class="pager"><span>${data.total ? `${data.offset + 1}–${to} מתוך ${data.total}` : ""}</span><div style="flex:1"></div>
+          <button id="prev" ${data.offset === 0 ? "disabled" : ""}>הקודם</button>
+          <button id="next" ${to >= data.total ? "disabled" : ""}>הבא</button></div>`;
+      bindRows(box, openRow);
+      document.getElementById("prev").onclick = () => { state.offset = Math.max(0, state.offset - PAGE); loadList(); };
+      document.getElementById("next").onclick = () => { state.offset += PAGE; loadList(); };
+    } catch (err) { box.innerHTML = `<div class="empty err">${esc(err.message)}</div>`; }
+  }
+
+  // ---------- טפסים ----------
+  const refCache = {};
+  async function refOptions(entity) {
+    if (!refCache[tenant + entity]) {
+      const data = await api(`/${tenant}/${entity}?limit=500`);
+      refCache[tenant + entity] = data.rows.map((r) => ({
+        value: String(r.id),
+        label: entity === "customers" ? `${r.full_name || "ללא שם"} (${r.main_phone})` : `${r.name}${r.price !== undefined ? " · " + money(r.price) : ""}`,
+        row: r,
+      }));
+    }
+    return refCache[tenant + entity];
+  }
+
+  function inputFor(f, value, opts) {
+    const v = value ?? "";
+    const id = `f_${f.name}`;
+    let control;
+    switch (f.type) {
+      case "longtext": control = `<textarea id="${id}" name="${f.name}">${esc(v)}</textarea>`; break;
+      case "bool": return `<div class="field check"><label><input type="checkbox" id="${id}" name="${f.name}" ${v === "" ? "checked" : v ? "checked" : ""}> ${esc(f.label)}</label></div>`;
+      case "enum": control = `<select id="${id}" name="${f.name}">${f.required ? "" : `<option value=""></option>`}${f.options.map((o) =>
+        `<option value="${esc(o.value)}" ${String(v) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`; break;
+      case "ref": control = `<select id="${id}" name="${f.name}"><option value="">בחרו…</option>${(opts[f.name] || []).map((o) =>
+        `<option value="${esc(o.value)}" ${String(v) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`; break;
+      case "date": control = `<input type="date" id="${id}" name="${f.name}" value="${esc(v)}">`; break;
+      case "datetime": control = `<input type="datetime-local" id="${id}" name="${f.name}" value="${esc(String(v).replace(" ", "T").slice(0, 16))}">`; break;
+      case "int": case "real": control = `<input type="number" step="${f.type === "real" ? "0.01" : "1"}" min="0" id="${id}" name="${f.name}" value="${esc(v)}">`; break;
+      case "phone": control = `<input type="tel" dir="ltr" id="${id}" name="${f.name}" value="${esc(v)}">`; break;
+      default: control = `<input type="text" id="${id}" name="${f.name}" value="${esc(v)}">`;
+    }
+    return `<div class="field"><label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>${control}${f.help ? `<div class="help">${esc(f.help)}</div>` : ""}</div>`;
+  }
+
+  function readForm(fields) {
+    const out = {};
+    for (const f of fields) {
+      const el = dlgForm.querySelector(`[name="${f.name}"]`);
+      if (!el) continue;
+      out[f.name] = f.type === "bool" ? el.checked : el.value;
+    }
+    return out;
+  }
+
+  async function openForm(entity, id, preset = {}, onDone) {
+    const e = META.entities[entity];
+    const fields = e.fields;
+    let row = { ...preset };
+    try {
+      if (id) row = (await api(`/${tenant}/${entity}/${id}`)).row;
+      const opts = {};
+      for (const f of fields.filter((f) => f.type === "ref")) opts[f.name] = await refOptions(f.ref);
+
+      const phonesField = entity === "subscriptions"
+        ? `<div class="field"><label>טלפונים עם גישה * (עד 2, מופרדים בפסיק)</label><input type="text" dir="ltr" name="phones" value="${esc((row.phone_list || preset.phone_list || []).join(", "))}"></div>` : "";
+      const extBtn = entity === "courses" && id ? `<button type="button" id="ext">הגדרת שלוחה</button>` : "";
+
+      dlgForm.innerHTML = `
+        <div class="dlg-head"><span>${id ? "עריכה" : "חדש"}: ${esc(e.label)}${id ? ` #${id}` : ""}</span></div>
+        <div class="dlg-body">${fields.map((f) => inputFor(f, row[f.name], opts)).join("")}${phonesField}<div class="err" id="form-err"></div></div>
+        <div class="dlg-foot">
+          <button class="primary" id="save" value="default">שמירה</button>
+          <button type="button" id="cancel">ביטול</button>
+          ${extBtn}
+          <div class="spacer"></div>
+          ${id && e.deletable ? `<button type="button" class="danger" id="del">מחיקה</button>` : ""}
+        </div>`;
+
+      if (entity === "subscriptions") {
+        const courseSel = dlgForm.querySelector('[name="course_id"]');
+        const priceIn = dlgForm.querySelector('[name="price"]');
+        courseSel.onchange = () => {
+          const c = opts.course_id.find((o) => o.value === courseSel.value);
+          if (c && !priceIn.value) priceIn.value = c.row.price;
+        };
+      }
+      if (entity === "orders") {
+        const prodSel = dlgForm.querySelector('[name="product_id"]');
+        const amountIn = dlgForm.querySelector('[name="amount"]');
+        prodSel.onchange = () => {
+          const p = opts.product_id.find((o) => o.value === prodSel.value);
+          if (p && !amountIn.value) amountIn.value = p.row.price;
+        };
+      }
+
+      dlgForm.querySelector("#cancel").onclick = () => dlg.close();
+      dlgForm.querySelector("#save").onclick = async (ev) => {
+        ev.preventDefault();
+        const body = readForm(fields);
+        if (entity === "subscriptions") body.phones = dlgForm.querySelector('[name="phones"]').value;
+        try {
+          await api(`/${tenant}/${entity}${id ? "/" + id : ""}`, { method: id ? "PUT" : "POST", body });
+          delete refCache[tenant + entity];
+          dlg.close(); toast("נשמר");
+          onDone ? onDone() : refresh();
+        } catch (err) { dlgForm.querySelector("#form-err").textContent = err.message; }
+      };
+      const del = dlgForm.querySelector("#del");
+      if (del) del.onclick = async () => {
+        if (!confirm("למחוק את הרשומה?")) return;
+        try {
+          await api(`/${tenant}/${entity}/${id}`, { method: "DELETE", body: {} });
+          delete refCache[tenant + entity];
+          dlg.close(); toast("נמחק");
+          onDone ? onDone() : refresh();
+        } catch (err) { dlgForm.querySelector("#form-err").textContent = err.message; }
+      };
+      const ext = dlgForm.querySelector("#ext");
+      if (ext) ext.onclick = () => showExtension(row);
+      dlg.showModal();
+    } catch (err) { toast(err.message); }
+  }
+
+  function refresh() { view === "dashboard" ? renderDashboard() : loadList(); }
+
+  function showExtension(course) {
+    const link = `${location.origin}${BASE}/ivr/${tenant}/course`;
+    const ini = [
+      "type=api",
+      `api_link=${link}`,
+      "api_add_0=key=KEY",
+      `api_add_1=course=${course.ivr_code || course.id}`,
+      "api_add_2=ok=/5/1",
+      "api_add_3=pay=/5/2",
+      "api_add_4=exit=/",
+    ].join("\n");
+    dlgForm.innerHTML = `
+      <div class="dlg-head"><span>הגדרת שלוחה: ${esc(course.name)}</span></div>
+      <div class="dlg-body">
+        <p class="muted">יש להחליף: <b>KEY</b> במפתח של הלקוח, <b>ok</b> בתיקיית תוכן הקורס, <b>pay</b> בשלוחת הסליקה של נדרים פלוס לקורס הזה.
+          המחיר נלקח מהגדרות הקורס. כדי לקבוע מחיר מהשלוחה מוסיפים <code dir="ltr">api_add_5=price=100</code>.</p>
+        <pre class="code">${esc(ini)}</pre>
+        <p class="muted">כתובת לעדכוני תשלום מנדרים פלוס:</p>
+        <pre class="code">${esc(`${location.origin}${BASE}/pay/${tenant}/nedarim?key=KEY`)}</pre>
+      </div>
+      <div class="dlg-foot"><button type="button" class="primary" id="copy">העתקה</button><button type="button" id="close">סגירה</button></div>`;
+    dlgForm.querySelector("#copy").onclick = () => navigator.clipboard?.writeText(ini).then(() => toast("הועתק"));
+    dlgForm.querySelector("#close").onclick = () => dlg.close();
+    if (!dlg.open) dlg.showModal();
+  }
+
+  // ---------- כרטיס לקוח ----------
+  async function showCustomer(id) {
+    const main = document.getElementById("main");
+    main.innerHTML = `<div class="muted">טוען…</div>`;
+    try {
+      const { row, related } = await api(`/${tenant}/customers/${id}`);
+      const E = META.entities;
+      main.innerHTML = `
+        <div class="toolbar"><button id="back">→ חזרה</button><div style="flex:1"></div>
+          <button id="edit">עריכת פרטים</button><button class="primary" id="add-sub">+ מנוי לקורס</button><button id="add-order">+ הזמנה</button></div>
+        <div class="panel"><div class="detail-grid">
+          <div><span>שם</span>${esc(row.full_name || "—")}</div>
+          <div><span>טלפון ראשי</span>${esc(row.main_phone)}</div>
+          <div><span>אימייל</span>${esc(row.email || "—")}</div>
+          <div><span>ת.ז.</span>${esc(row.id_number || "—")}</div>
+          <div><span>נוצר</span>${esc(row.created_at)}</div>
+          <div><span>הערות</span>${esc(row.notes || "—")}</div>
+        </div></div>
+        <h2>מנויים לקורסים</h2><div class="panel" id="r-subs">${table("subscriptions", related.subscriptions, E.subscriptions.columns.filter((c) => !c.name.startsWith("customer_")))}</div>
+        <h2>הזמנות</h2><div class="panel" id="r-orders">${table("orders", related.orders, E.orders.columns.filter((c) => !c.name.startsWith("customer_")))}</div>
+        <h2>תשלומים</h2><div class="panel" id="r-pay">${table("payments", related.payments, E.payments.columns.filter((c) => !c.name.startsWith("customer_")))}</div>
+        <h2>יומן שיחות אחרונות</h2><div class="panel">${table("ivr_log", related.ivr_log, E.ivr_log.columns, false)}</div>`;
+      const reload = () => showCustomer(id);
+      document.getElementById("back").onclick = () => go(view);
+      document.getElementById("edit").onclick = () => openForm("customers", id, {}, reload);
+      document.getElementById("add-sub").onclick = () => openForm("subscriptions", null, { customer_id: id, status: "active", phone_list: [row.main_phone] }, reload);
+      document.getElementById("add-order").onclick = () => openForm("orders", null, { customer_id: id, status: "paid" }, reload);
+      ["r-subs", "r-orders", "r-pay"].forEach((bid) => bindRows(document.getElementById(bid), (ent, rid) => openForm(ent, rid, {}, reload)));
+    } catch (err) { main.innerHTML = `<div class="err">${esc(err.message)}</div>`; }
+  }
+
+  start().catch(() => {});
+})();
+</script>
+</body>
+</html>

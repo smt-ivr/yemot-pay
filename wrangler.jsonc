@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yemot-pay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "yemot-pay",
+      "database_id": "dd8bf73b-6dca-446d-a929-e467025ceac7",
+      "migrations_dir": "migrations"
+    }
+  ]
+  // הנתיב https://smti.uk/yemot-pay* מחובר דרך Cloudflare (route).
+  // סודות (לא כאן!): wrangler secret put TENANT_KEYS / ADMIN_PASSWORD
+}
