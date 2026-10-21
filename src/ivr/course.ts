@@ -3,24 +3,22 @@ import { d, goToFolder, idListMessage, priceParts, readTap, t, yemotResponse, ty
 import { EMPTY, V, exitFolder, failResponse, resolveCourse, restartResponse, type IvrContext } from "./common";
 
 /**
- * שלוחת קורס.
- * פרמטרים מהשלוחה (api_add): key, course, [price, name, source], ok, pay, [exit], [mode=buy]
+ * שלוחת רכישת קורס.
+ * פרמטרים מהשלוחה (api_add): key, course, pay, [price, name, source, exit, ok]
  *
- * 1. אם לטלפון המתקשר יש מנוי פעיל לקורס - מעבר לתיקיית התוכן (ok).
- * 2. אחרת: הצעה לרכוש (1) או לצאת (2).
+ * 1. אם הוגדר ok: מי שיש לו גישה עובר לתוכן (ok). בלי ok אין בדיקה כאן -
+ *    הבדיקה נעשית בשלוחת התוכן עם check_api (ראו check.ts), ומשם מי שאין לו גישה מגיע לכאן.
+ * 2. הצעה לרכוש (1) או לצאת (2).
  * 3. רכישה: טלפון ראשון, טלפון שני (אפשר לדלג), אישור.
  * 4. נוצר מנוי pending עם הטלפונים, והשיחה עוברת לשלוחת התשלום של נדרים פלוס (pay).
  *    תשלום מוצלח -> המנוי פעיל (לצמיתות, או לפי access_days של הקורס).
  *    תשלום שנכשל -> אין גישה, והמתקשר יכול להיכנס לשלוחה שוב ולנסות מחדש.
- *
- * mode=buy מדלג על בדיקת הגישה ועל התפריט - לשימוש כשתפריט ההצעה בנוי בימות.
  */
 export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
-  const okFolder = req.get("ok");
+  const okFolder = req.get("mode") === "buy" ? null : req.get("ok");
   const payFolder = req.get("pay");
-  const buyMode = req.get("mode") === "buy";
-  if ((!okFolder && !buyMode) || !payFolder) {
-    await db.log(req.phone, req.callId, "config_error", { endpoint: "course", missing: !payFolder ? "pay" : "ok" });
+  if (!payFolder) {
+    await db.log(req.phone, req.callId, "config_error", { endpoint: "course", missing: "pay" });
     return failResponse(req, "השלוחה לא הוגדרה כראוי");
   }
 
@@ -31,18 +29,19 @@ export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
   }
   const { item: course, price } = resolved;
   const caller = normalizePhone(req.phone);
-  const offer: Part[] = [t(`מחיר הקורס ${course.name}`), ...priceParts(price)];
 
   // שלב 1: בדיקת גישה + תפריט
   const menu = req.get(V.menu);
-  if (!buyMode && menu === null) {
-    if (caller && (await db.hasCourseAccess(caller, course.id))) {
+  if (menu === null) {
+    const hasAccess = caller !== null && (await db.hasCourseAccess(caller, course.id));
+    if (hasAccess) {
       await db.log(req.phone, req.callId, "access_granted", { course_id: course.id });
-      return yemotResponse(goToFolder(okFolder!));
+      if (okFolder) return yemotResponse(goToFolder(okFolder));
+      return yemotResponse(idListMessage([t("כבר יש לך גישה לקורס הזה")]), goToFolder(exitFolder(req)));
     }
-    await db.log(req.phone, req.callId, "access_denied", { course_id: course.id });
+    await db.log(req.phone, req.callId, "purchase_offer", { course_id: course.id });
     return yemotResponse(
-      readTap([t("אין לך עדיין גישה לקורס"), ...offer, t("לרכישה הקישו 1, ליציאה הקישו 2")], {
+      readTap([t(`לרכישת הקורס ${course.name}`), t("במחיר"), ...priceParts(price), t("הקישו 1, ליציאה הקישו 2")], {
         name: V.menu,
         max: 1,
         min: 1,
@@ -50,7 +49,7 @@ export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
       }),
     );
   }
-  if (!buyMode && menu !== "1") {
+  if (menu !== "1") {
     await db.log(req.phone, req.callId, "purchase_declined", { course_id: course.id });
     return yemotResponse(goToFolder(exitFolder(req)));
   }
@@ -58,9 +57,8 @@ export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
   // שלב 2: טלפון ראשון
   const phone1Raw = req.get(V.phone1);
   if (phone1Raw === null) {
-    const intro = buyMode ? offer : [];
     return yemotResponse(
-      readTap([...intro, t("הקישו את מספר הטלפון הראשון שיקבל גישה לקורס")], { name: V.phone1, playback: "Phone", min: 9, max: 10 }),
+      readTap([t("הקישו את מספר הטלפון הראשון שיקבל גישה לקורס")], { name: V.phone1, playback: "Phone", min: 9, max: 10 }),
     );
   }
   const phone1 = normalizePhone(phone1Raw);

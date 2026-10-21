@@ -205,3 +205,23 @@ describe("payment callback edge cases", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("check_api permission check", () => {
+  it("answers OK for a phone with access and Out / NO otherwise", async () => {
+    expect((await ivr("check", { ApiPhone: "0502222222", course: "c1" })).body).toBe("OK");
+    expect((await ivr("check", { ApiPhone: "0507070707", course: "c1" })).body).toBe("Out");
+    expect((await ivr("check", { ApiPhone: "0507070707", course: "c1", deny: "no" })).body).toBe("NO");
+  });
+
+  it("answers something else on a bad course or key, so Yemot uses api_error_goto", async () => {
+    expect((await ivr("check", { ApiPhone: "0502222222", course: "missing" })).body).toBe("ERROR");
+    expect((await ivr("check", { ApiPhone: "0502222222", course: "c1" }, "wrong-key-wrong-key")).status).toBe(403);
+  });
+
+  it("purchase extension without ok goes straight to the offer, and tells an existing subscriber", async () => {
+    const offer = await ivr("course", { ApiPhone: "0507070707", course: "c1", pay: "/9/1" });
+    expect(offer.body).toContain("=yp_menu,");
+    const owner = await ivr("course", { ApiPhone: "0502222222", course: "c1", pay: "/9/1", exit: "/" });
+    expect(owner.body).toBe("id_list_message=t-כבר יש לך גישה לקורס הזה&go_to_folder=/");
+  });
+});
