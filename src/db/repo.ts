@@ -96,16 +96,20 @@ export class TenantDb {
 
   // ---------- הרשאת גישה ----------
 
+  /**
+   * end_date הוא יום פקיעת התוקף: מהיום הזה (שעון ישראל) כבר אין גישה.
+   * קורס של 30 ימים שנרכש היום פג בעוד 30 ימים - בדיוק 30 ימי גישה.
+   */
   async hasCourseAccess(phone: string, courseId: number): Promise<boolean> {
     const row = await this.db
       .prepare(
         `SELECT 1 AS ok FROM ${this.t.subscription_phones} sp
          JOIN ${this.t.subscriptions} s ON s.id = sp.subscription_id
          WHERE sp.phone = ? AND s.course_id = ? AND s.status = 'active'
-           AND (s.end_date IS NULL OR s.end_date >= date('now'))
+           AND (s.end_date IS NULL OR s.end_date > ?)
          LIMIT 1`,
       )
-      .bind(phone, courseId)
+      .bind(phone, courseId, todayIso())
       .first();
     return row !== null;
   }
@@ -114,12 +118,12 @@ export class TenantDb {
   async courseAccessStatus(phone: string, courseId: number): Promise<"active" | "expired" | "none"> {
     const row = await this.db
       .prepare(
-        `SELECT (s.end_date IS NULL OR s.end_date >= date('now')) AS valid FROM ${this.t.subscription_phones} sp
+        `SELECT (s.end_date IS NULL OR s.end_date > ?) AS valid FROM ${this.t.subscription_phones} sp
          JOIN ${this.t.subscriptions} s ON s.id = sp.subscription_id
          WHERE sp.phone = ? AND s.course_id = ? AND s.status = 'active'
          ORDER BY valid DESC LIMIT 1`,
       )
-      .bind(phone, courseId)
+      .bind(todayIso(), phone, courseId)
       .first<{ valid: number }>();
     if (!row) return "none";
     return row.valid ? "active" : "expired";

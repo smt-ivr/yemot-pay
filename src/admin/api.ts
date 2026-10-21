@@ -619,7 +619,7 @@ async function stats(db: TenantDb) {
     one(`SELECT
       (SELECT count(*) FROM ${t.customers}) AS customers,
       (SELECT count(*) FROM ${t.courses} WHERE is_active = 1) AS courses,
-      (SELECT count(*) FROM ${t.subscriptions} WHERE status = 'active' AND (end_date IS NULL OR end_date >= date('now'))) AS active_subscriptions,
+      (SELECT count(*) FROM ${t.subscriptions} WHERE status = 'active' AND (end_date IS NULL OR end_date > '${todayIso()}')) AS active_subscriptions,
       (SELECT count(*) FROM ${t.subscriptions} WHERE created_at >= datetime('now', '-30 days')) AS new_subscriptions_30d,
       (SELECT count(*) FROM ${t.orders} WHERE status IN ('paid','scheduled')) AS open_orders,
       (SELECT COALESCE(sum(amount), 0) FROM ${t.payments} WHERE status = 'success') AS revenue_total,

@@ -81,6 +81,7 @@ export function yemotResponse(...actions: string[]): Response {
 
 /** מקריא מחיר בלי נקודה עשרונית (נקודה אסורה בטקסט). */
 export function priceParts(price: number): Part[] {
+  if (price <= 0) return [t("ללא תשלום")];
   const shekels = Math.floor(price);
   const agorot = Math.round((price - shekels) * 100);
   const parts: Part[] = [n(shekels), t("שקלים")];

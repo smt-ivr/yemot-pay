@@ -6,11 +6,14 @@
 | | כתובת |
 |---|---|
 | מערכת ניהול / אזור אישי | `https://smti.uk/yemot-pay/admin/` |
-| בדיקת גישה (check_api) | `https://smti.uk/yemot-pay/ivr/check?client=1&course=1` |
-| רכישת קורס | `https://smti.uk/yemot-pay/ivr/course?client=1&course=1&key=...` |
-| רכישת מוצר / פגישה | `https://smti.uk/yemot-pay/ivr/product?client=1&product=m1&key=...` |
+| בדיקת גישה (check_api) | `https://smti.uk/yemot-pay/ivr/check` |
+| רכישת קורס | `https://smti.uk/yemot-pay/ivr/course` |
+| רכישת מוצר / פגישה | `https://smti.uk/yemot-pay/ivr/product` |
 
-`client` הוא **מספר הלקוח** שנקבע במערכת הניהול. כל הפרמטרים כתובים בתוך הכתובת עצמה, ואין צורך בשורות `api_add`.
+הכתובות נשארות בלי פרמטרים. את הנתונים מעבירים בשורות `api_add`:
+- `client`: **מספר הלקוח** שנקבע במערכת הניהול.
+- `course` או `product`: המזהה.
+- `key`: המפתח, בשלוחות רכישה.
 
 📄 **תיעוד מדויק להעתקה לימות המשיח: [docs/YEMOT.md](docs/YEMOT.md)**. הגרסה עם הערכים האמיתיים נמצאת במערכת הניהול ← הגדרות ← הגדרות לימות המשיח.
 
@@ -45,8 +48,8 @@
 
 | שדה | משמעות |
 |---|---|
-| שם, **מזהה קורס**, מחיר | המזהה מופיע בכתובות (`course=`) |
-| תוקף גישה (ימים) | ריק = לצמיתות |
+| שם, **מזהה קורס**, מחיר | המזהה נכתב ב-`api_add_1=course=…`. מחיר 0 = ללא תשלום (לבדיקות) |
+| תוקף גישה (ימים) | ריק = לצמיתות. מיום הפקיעה (שעון ישראל) כבר אין גישה |
 | כמה טלפונים לכל רכישה | כל מספר |
 | פעיל | האם פתוח לרכישה |
 | כשהקורס לא פעיל | "ממשיך לקבל גישה" או "נחסם, ושומע שהקורס אינו פעיל" |
@@ -58,7 +61,9 @@
 ```ini
 check_api=yes
 check_api_every_entry=yes
-api_link=https://smti.uk/yemot-pay/ivr/check?client=1&course=1
+api_link=https://smti.uk/yemot-pay/ivr/check
+api_add_0=client=1
+api_add_1=course=1
 api_goto=1
 api_error_goto=/
 ```
@@ -66,7 +71,10 @@ api_error_goto=/
 **תת-שלוחה 1 (5/1), רכישה:**
 ```ini
 type=api
-api_link=https://smti.uk/yemot-pay/ivr/course?client=1&course=1&key=המפתח
+api_link=https://smti.uk/yemot-pay/ivr/course
+api_add_0=client=1
+api_add_1=course=1
+api_add_2=key=המפתח
 ```
 
 ### 6. מה המתקשר שומע
@@ -88,7 +96,10 @@ api_link=https://smti.uk/yemot-pay/ivr/course?client=1&course=1&key=המפתח
 בתפריט **מוצרים ופגישות ← חדש** בוחרים סוג: מוצר, פגישה או פגישה טלפונית. בימות:
 ```ini
 type=api
-api_link=https://smti.uk/yemot-pay/ivr/product?client=1&product=m1&key=המפתח
+api_link=https://smti.uk/yemot-pay/ivr/product
+api_add_0=client=1
+api_add_1=product=m1
+api_add_2=key=המפתח
 ```
 - בפגישה טלפונית המתקשר מתבקש גם טלפון לתיאום (1 וסולמית למספר שממנו התקשר, או הקשה ואישור).
 - אחרי תשלום מוצלח נשלח מייל לפי ההגדרות.
