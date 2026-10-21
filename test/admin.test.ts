@@ -1,7 +1,9 @@
 import { SELF } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 const ORIGIN = "https://smti.uk/yemot-pay";
+const DB = (env as unknown as { DB: D1Database }).DB;
 let cookie = "";
 
 async function api(path: string, method = "GET", body?: unknown) {
@@ -101,10 +103,6 @@ describe("admin", () => {
     expect(detail.data.related.subscriptions).toHaveLength(1);
   });
 
-  it("refuses to delete a customer with linked records", async () => {
-    const customerId = (await api("/zeevi-weiss/customers?q=0521234567")).data.rows[0].id;
-    expect((await api(`/zeevi-weiss/customers/${customerId}`, "DELETE", {})).status).toBe(409);
-  });
 
   it("returns dashboard stats and keeps the log read-only", async () => {
     const stats = await api("/zeevi-weiss/stats");
@@ -149,5 +147,46 @@ describe("admin", () => {
     expect(rotated.data.api_key).not.toBe(cohen.api_key);
     const oldKey = await SELF.fetch(`${ORIGIN}/ivr/cohen/course?key=${cohen.api_key}&ApiPhone=0521111111&course=k1`);
     expect(await oldKey.text()).toContain("השלוחה לא הוגדרה כראוי");
+  });
+
+  it("rebuilt the phones table so a subscription can have more than two phones", async () => {
+    const def = await DB.prepare(
+      "SELECT sql FROM sqlite_master WHERE name = 'zeevi_weiss_subscription_phones'",
+    ).first<{ sql: string }>();
+    expect(def!.sql).toContain("slot >= 1");
+  });
+
+  it("limits phones by the course setting and deletes a subscription with payments", async () => {
+    const course = await api("/zeevi-weiss/courses", "POST", { name: "שלושה", ivr_code: "three", price: "10", max_phones: "3", is_active: true });
+    const customer = await api("/zeevi-weiss/customers", "POST", { main_phone: "0541234567" });
+    const tooMany = await api("/zeevi-weiss/subscriptions", "POST", {
+      customer_id: customer.data.id, course_id: course.data.id, status: "active", price: "10",
+      phones: ["0541234567", "0541234568", "0541234569", "0541234570"],
+    });
+    expect(tooMany.status).toBe(400);
+    const sub = await api("/zeevi-weiss/subscriptions", "POST", {
+      customer_id: customer.data.id, course_id: course.data.id, status: "active", price: "10",
+      phones: ["0541234567", "0541234568", "0541234569"],
+    });
+    expect(sub.status).toBe(201);
+
+    await DB.prepare("INSERT INTO zeevi_weiss_payments (customer_id, subscription_id, amount, status) VALUES (?, ?, 10, 'success')")
+      .bind(customer.data.id, sub.data.id).run();
+
+    expect((await api(`/zeevi-weiss/subscriptions/${sub.data.id}`, "DELETE", {})).status).toBe(200);
+    expect((await api(`/zeevi-weiss/subscriptions/${sub.data.id}`)).status).toBe(404);
+    const pay = await DB.prepare("SELECT subscription_id FROM zeevi_weiss_payments WHERE customer_id = ?").bind(customer.data.id).first();
+    expect(pay).toEqual({ subscription_id: null });
+
+    // קורס בלי מנויים נמחק; רוכש נמחק עם כל הנתונים שלו
+    expect((await api(`/zeevi-weiss/courses/${course.data.id}`, "DELETE", {})).status).toBe(200);
+    expect((await api(`/zeevi-weiss/customers/${customer.data.id}`, "DELETE", {})).status).toBe(200);
+  });
+
+  it("refuses to delete a course that has subscriptions, with a clear message", async () => {
+    const course = (await api("/zeevi-weiss/courses?q=m10")).data.rows[0];
+    const r = await api(`/zeevi-weiss/courses/${course.id}`, "DELETE", {});
+    expect(r.status).toBe(409);
+    expect(r.data.error).toContain("פעיל");
   });
 });

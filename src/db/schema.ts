@@ -49,15 +49,7 @@ export function tenantTablesSql(prefix: string): string[] {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
-    `CREATE TABLE IF NOT EXISTS ${p}subscription_phones (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      subscription_id INTEGER NOT NULL REFERENCES ${p}subscriptions(id) ON DELETE CASCADE,
-      phone TEXT NOT NULL,
-      slot INTEGER NOT NULL CHECK (slot IN (1,2)),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE (subscription_id, slot),
-      UNIQUE (subscription_id, phone)
-    )`,
+    phonesTableSql(`${p}subscription_phones`, p),
     `CREATE TABLE IF NOT EXISTS ${p}orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       customer_id INTEGER NOT NULL REFERENCES ${p}customers(id),
@@ -101,4 +93,17 @@ export function tenantTablesSql(prefix: string): string[] {
     `CREATE INDEX IF NOT EXISTS idx_${p}sub_phones_phone ON ${p}subscription_phones(phone)`,
     `CREATE INDEX IF NOT EXISTS idx_${p}subs_customer ON ${p}subscriptions(customer_id)`,
   ];
+}
+
+/** טבלת הטלפונים של מנוי - כמה טלפונים שמוגדר בקורס (slot מ-1 והלאה). */
+export function phonesTableSql(name: string, prefix: string): string {
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subscription_id INTEGER NOT NULL REFERENCES ${prefix}subscriptions(id) ON DELETE CASCADE,
+      phone TEXT NOT NULL,
+      slot INTEGER NOT NULL CHECK (slot >= 1),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (subscription_id, slot),
+      UNIQUE (subscription_id, phone)
+    )`;
 }

@@ -1,6 +1,6 @@
 import { normalizePhone } from "../lib/util";
 import { goToFolder, idListMessage, priceParts, readTap, t, yemotResponse } from "../yemot/response";
-import { V, exitFolder, failResponse, resolveProduct, restartResponse, type IvrContext } from "./common";
+import { V, exitFolder, failResponse, resolveProduct, type IvrContext } from "./common";
 import { PROVIDER, paymentCode, paymentNotCompleted, startPayment, transactionId } from "./payment";
 
 /**
@@ -22,18 +22,18 @@ export async function handleProduct({ db, req }: IvrContext): Promise<Response> 
   let contact = caller;
   if (product.type === "phone_meeting") {
     const raw = req.get(V.contact);
-    if (raw === null) {
-      return yemotResponse(
-        readTap([t(`${product.name}`), ...priceParts(price), t("הקישו מספר טלפון לתיאום הפגישה")], {
+    const ask = (problem: string[] = []) =>
+      yemotResponse(
+        readTap([...problem.map(t), t(`${product.name}`), ...priceParts(price), t("הקישו מספר טלפון לתיאום הפגישה וסולמית")], {
           name: V.contact,
-          playback: "Phone",
+          reEnter: true,
           min: 9,
           max: 10,
         }),
       );
-    }
+    if (raw === null) return ask();
     contact = normalizePhone(raw);
-    if (!contact) return restartResponse(req, "מספר הטלפון שהוקש אינו תקין");
+    if (!contact) return ask(["המספר שהוקש שגוי"]);
   }
 
   const confirm = req.get(V.confirm);

@@ -38,6 +38,8 @@ export type PlaybackMode = "No" | "Number" | "Digits" | "Phone" | "Price" | "Teu
 export interface TapOptions {
   /** שם הערך שיחזור בבקשה הבאה */
   name: string;
+  /** לבקש שוב גם אם כבר יש ערך בשם הזה (לבקשה חוזרת אחרי הקשה שגויה) */
+  reEnter?: boolean;
   max?: number;
   min?: number;
   secWait?: number;
@@ -54,7 +56,7 @@ export interface TapOptions {
 export function readTap(parts: Part[], o: TapOptions): string {
   const ops = [
     o.name,
-    "no",
+    o.reEnter ? "yes" : "no",
     o.max ?? "",
     o.min ?? 1,
     o.secWait ?? 7,
