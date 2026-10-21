@@ -10,7 +10,7 @@ const text = (body: string) => new Response(body, { headers: { "content-type": "
  *   NO  - יוצא עם הודעת "אין לכם הרשאת גישה" ועובר ל-api_goto
  *   Out - יוצא בלי הודעה ועובר ל-api_goto (למשל לשלוחת הרכישה)
  * כל תשובה אחרת (שגיאה) -> api_error_goto.
- * פרמטרים: key, course, [deny=no|out] (ברירת מחדל out)
+ * פרמטרים: course, [deny=no|out] (ברירת מחדל out). לא נדרש מפתח - התשובה רק אומרת אם יש גישה.
  */
 export async function handleCheck({ db, req }: IvrContext): Promise<Response> {
   const resolved = await resolveCourse(db, req);

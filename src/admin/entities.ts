@@ -133,7 +133,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
   },
 
   customers: {
-    label: "לקוחות",
+    label: "רוכשים",
     table: "customers",
     fields: [
       { name: "full_name", label: "שם מלא", type: "text" },

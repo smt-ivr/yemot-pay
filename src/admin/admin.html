@@ -135,7 +135,7 @@
     const saved = localStorageGet("yp_tenant");
     tenant = META.tenants.some((t) => t.slug === saved) ? saved : META.tenants[0]?.slug;
     const hash = location.hash.slice(1);
-    view = hash === "dashboard" || META.entities[hash] ? hash : "dashboard";
+    view = hash === "dashboard" || hash === "tenants" || META.entities[hash] ? hash : "dashboard";
     renderShell();
   }
 
@@ -144,11 +144,12 @@
 
   // ---------- מסגרת ----------
   function renderShell() {
-    const tabs = [["dashboard", "לוח בקרה"], ...Object.entries(META.entities).map(([k, e]) => [k, e.label])];
+    const tabs = [["tenants", "לקוחות"], ["dashboard", "לוח בקרה"], ...Object.entries(META.entities).map(([k, e]) => [k, e.label])];
     app.innerHTML = `
       <header>
         <h1>ניהול ימות פיי</h1>
-        <select id="tenant">${META.tenants.map((t) => `<option value="${esc(t.slug)}" ${t.slug === tenant ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select>
+        <label class="muted" for="tenant">לקוח:</label>
+        <select id="tenant">${tenantOptions()}</select>
         <div class="spacer"></div>
         <button id="logout">יציאה</button>
       </header>
@@ -160,11 +161,106 @@
     go(view);
   }
 
+  function tenantOptions() {
+    return META.tenants.map((t) => `<option value="${esc(t.slug)}" ${t.slug === tenant ? "selected" : ""}>${esc(t.title)}</option>`).join("");
+  }
+  function currentTenant() { return META.tenants.find((t) => t.slug === tenant); }
+
   function go(v) {
     view = v; state.q = ""; state.filters = {}; state.offset = 0;
     history.replaceState(null, "", "#" + v);
     app.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === v));
-    v === "dashboard" ? renderDashboard() : renderList();
+    if (v === "tenants") renderTenants();
+    else if (v === "dashboard") renderDashboard();
+    else renderList();
+  }
+
+  // ---------- לקוחות הפלטפורמה ----------
+  async function reloadTenants() {
+    META.tenants = (await api("/tenants")).rows;
+    const sel = document.getElementById("tenant");
+    if (sel) sel.innerHTML = tenantOptions();
+  }
+
+  function renderTenants() {
+    const main = document.getElementById("main");
+    const rows = META.tenants;
+    main.innerHTML = `
+      <div class="toolbar"><h2 style="margin:0">הלקוחות שלי</h2><div style="flex:1"></div><button class="primary" id="new-tenant">+ לקוח חדש</button></div>
+      <div class="panel"><div class="table-wrap"><table>
+        <thead><tr><th>שם</th><th>מזהה</th><th>מספר מוסד בנדרים</th><th>איש קשר</th><th>טלפון</th><th>פעיל</th></tr></thead>
+        <tbody>${rows.map((t) => `<tr data-slug="${esc(t.slug)}">
+          <td>${esc(t.title)}</td><td dir="ltr">${esc(t.slug)}</td>
+          <td>${t.nedarim_mosad_id ? esc(t.nedarim_mosad_id) : '<span class="badge failed">חסר</span>'}</td>
+          <td>${esc(t.contact_name)}</td><td>${esc(t.contact_phone)}</td><td>${t.is_active ? "✓" : "—"}</td></tr>`).join("")}</tbody>
+      </table></div></div>`;
+    main.querySelectorAll("tbody tr").forEach((tr) => tr.onclick = () => openTenant(tr.dataset.slug));
+    document.getElementById("new-tenant").onclick = () => openTenant(null);
+  }
+
+  function openTenant(slug) {
+    const t = slug ? META.tenants.find((x) => x.slug === slug) : { is_active: 1 };
+    const f = (name, label, value, attrs = "") => `<div class="field"><label for="t_${name}">${label}</label><input id="t_${name}" name="${name}" value="${esc(value)}" ${attrs}></div>`;
+    const ivrBase = `${location.origin}${BASE}/ivr/${slug}`;
+    dlgForm.innerHTML = `
+      <div class="dlg-head"><span>${slug ? "לקוח: " + esc(t.title) : "לקוח חדש"}</span></div>
+      <div class="dlg-body">
+        ${f("title", "שם הלקוח *", t.title)}
+        ${f("slug", "מזהה באנגלית (מופיע בכתובת) *", t.slug, slug ? 'dir="ltr" disabled' : 'dir="ltr" placeholder="cohen-store"')}
+        ${f("nedarim_mosad_id", "מספר מוסד בנדרים פלוס", t.nedarim_mosad_id, 'dir="ltr" inputmode="numeric"')}
+        ${f("contact_name", "איש קשר", t.contact_name)}
+        ${f("contact_phone", "טלפון", t.contact_phone, 'dir="ltr"')}
+        <div class="field"><label for="t_notes">הערות</label><textarea id="t_notes" name="notes">${esc(t.notes)}</textarea></div>
+        <div class="field check"><label><input type="checkbox" name="is_active" ${t.is_active ? "checked" : ""}> פעיל</label></div>
+        ${slug ? `
+          <div class="field"><label>מפתח לשלוחות ימות (api_add_0=key=...)</label>
+            <pre class="code" id="t_key">${esc(t.api_key)}</pre>
+            <button type="button" id="copy-key">העתקת מפתח</button> <button type="button" class="danger" id="rotate-key">יצירת מפתח חדש</button>
+          </div>
+          <div class="field"><label>כתובות לשלוחות</label>
+            <pre class="code">בדיקת הרשאה (check_api):  ${esc(ivrBase)}/check
+רכישת קורס:              ${esc(ivrBase)}/course
+רכישת מוצר / פגישה:      ${esc(ivrBase)}/product</pre>
+            <div class="help">הגדרה מלאה לכל קורס: בלשונית קורסים, פותחים קורס ולוחצים "הגדרת שלוחה".</div>
+          </div>` : `<div class="help">בשמירה ייווצרו ללקוח הטבלאות במסד ומפתח לשלוחות.</div>`}
+        <div class="err" id="form-err"></div>
+      </div>
+      <div class="dlg-foot"><button class="primary" id="save">שמירה</button><button type="button" id="cancel">ביטול</button></div>`;
+    const val = (n) => dlgForm.querySelector(`[name="${n}"]`);
+    dlgForm.querySelector("#cancel").onclick = () => dlg.close();
+    dlgForm.querySelector("#save").onclick = async (ev) => {
+      ev.preventDefault();
+      const body = {
+        title: val("title").value, nedarim_mosad_id: val("nedarim_mosad_id").value,
+        contact_name: val("contact_name").value, contact_phone: val("contact_phone").value,
+        notes: val("notes").value, is_active: val("is_active").checked,
+      };
+      try {
+        if (slug) await api(`/tenants/${slug}`, { method: "PUT", body });
+        else {
+          body.slug = val("slug").value.trim().toLowerCase();
+          await api("/tenants", { method: "POST", body });
+        }
+        await reloadTenants();
+        dlg.close(); toast("נשמר");
+        if (!slug) { tenant = body.slug; localStorageSet("yp_tenant", tenant); document.getElementById("tenant").innerHTML = tenantOptions(); }
+        renderTenants();
+      } catch (err) { dlgForm.querySelector("#form-err").textContent = err.message; }
+    };
+    if (slug) {
+      dlgForm.querySelector("#copy-key").onclick = () => navigator.clipboard?.writeText(t.api_key).then(() => toast("הועתק"));
+      dlgForm.querySelector("#rotate-key").onclick = async () => {
+        if (!confirm("ליצור מפתח חדש? המפתח הישן יפסיק לעבוד, ויש לעדכן אותו בכל שלוחות הרכישה בימות.")) return;
+        try {
+          const r = await api(`/tenants/${slug}/key`, { method: "POST", body: {} });
+          t.api_key = r.api_key;
+          dlgForm.querySelector("#t_key").textContent = r.api_key;
+          await reloadTenants();
+          toast("נוצר מפתח חדש");
+        } catch (err) { dlgForm.querySelector("#form-err").textContent = err.message; }
+      };
+    }
+    dlg.showModal();
   }
 
   // ---------- תצוגת ערכים ----------
@@ -378,26 +474,26 @@
     } catch (err) { toast(err.message); }
   }
 
-  function refresh() { view === "dashboard" ? renderDashboard() : loadList(); }
+  function refresh() { view === "dashboard" ? renderDashboard() : view === "tenants" ? renderTenants() : loadList(); }
 
   function showExtension(course) {
+    const t = currentTenant();
     const api = `${location.origin}${BASE}/ivr/${tenant}`;
     const code = course.ivr_code || course.id;
     const content = [
       "check_api=yes",
       "check_api_every_entry=yes",
       `api_link=${api}/check`,
-      "api_add_0=key=KEY",
-      `api_add_1=course=${code}`,
+      `api_add_0=course=${code}`,
       "api_goto=/6",
       "api_error_goto=/",
     ].join("\n");
     const buy = [
       "type=api",
       `api_link=${api}/course`,
-      "api_add_0=key=KEY",
+      `api_add_0=key=${t.api_key}`,
       `api_add_1=course=${code}`,
-      "api_add_2=pay=/7",
+      "api_add_2=ok=/5",
       "api_add_3=exit=/",
     ].join("\n");
     const block = (title, note, text, id) => `<p><b>${esc(title)}</b> <span class="muted">${note}</span></p>
@@ -405,12 +501,12 @@
     dlgForm.innerHTML = `
       <div class="dlg-head"><span>הגדרת שלוחות: ${esc(course.name)}</span></div>
       <div class="dlg-body">
-        <p class="muted">בדוגמה: תוכן הקורס בשלוחה 5, הרכישה בשלוחה 6, הסליקה של נדרים פלוס בשלוחה 7. יש להחליף את המספרים לפי המערכת, ואת <b>KEY</b> במפתח של הלקוח.</p>
-        ${block("1. שלוחת תוכן הקורס (5)", "– להוסיף להגדרות הקיימות של השלוחה. מי שאין לו גישה עובר לשלוחת הרכישה.", content, "content")}
-        ${block("2. שלוחת רכישה (6)", "– הצעה לרכישה, שני טלפונים, אישור, ומעבר לסליקה.", buy, "buy")}
-        <p style="margin-top:16px"><b>3. שלוחת הסליקה (7)</b> <span class="muted">– שלוחת נדרים פלוס עם מחיר הקורס (${esc(money(course.price))}). כתובת לעדכוני תשלום:</span></p>
-        <pre class="code">${esc(`${location.origin}${BASE}/pay/${tenant}/nedarim?key=KEY`)}</pre>
-        <p class="muted">המחיר נלקח מהגדרות הקורס. כדי לקבוע אותו מהשלוחה מוסיפים לשלוחת הרכישה <code dir="ltr">api_add_4=price=100</code>.</p>
+        ${t.nedarim_mosad_id ? "" : `<p class="err">ללקוח ${esc(t.title)} עדיין לא הוגדר מספר מוסד בנדרים פלוס – יש להגדיר בלשונית "לקוחות", אחרת הסליקה לא תעבוד.</p>`}
+        <p class="muted">בדוגמה: תוכן הקורס בשלוחה 5 ושלוחת הרכישה 6. יש להחליף את מספרי השלוחות לפי המערכת.</p>
+        ${block("1. שלוחת תוכן הקורס (5)", "– להוסיף להגדרות הקיימות. מי שאין לו גישה עובר לשלוחת הרכישה.", content, "content")}
+        ${block("2. שלוחת רכישה (6)", `– הצעה לרכישה ב-${esc(money(course.price))}, שני טלפונים, אישור, סליקה בנדרים פלוס (מוסד ${esc(t.nedarim_mosad_id || "—")}), ובהצלחה מעבר לתוכן.`, buy, "buy")}
+        <p class="muted" style="margin-top:14px">אין צורך בשלוחת סליקה נפרדת: הסליקה מתבצעת מתוך שלוחת הרכישה.
+          לרישום העסקאות בנדרים תחת קטגוריה, מוסיפים לשלוחת הרכישה <code dir="ltr">credit_card_category_nedarim_plus=שם הקטגוריה</code>.</p>
       </div>
       <div class="dlg-foot"><button type="button" class="primary" id="close">סגירה</button></div>`;
     const texts = { content, buy };

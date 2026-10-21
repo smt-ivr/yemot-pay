@@ -1,7 +1,7 @@
 import { TenantDb } from "../db/repo";
 import type { Env } from "../env";
 import { addDays, normalizePhone, todayIso } from "../lib/util";
-import { allTenants, resolveTenant } from "../tenants";
+import { SLUG_RE, createTenant, getTenant, listTenants, rotateTenantKey, updateTenant } from "../tenants";
 import { ENTITIES, getEntity, type Entity, type EntityName, type Field } from "./entities";
 import { checkPassword, clearSessionCookie, createSessionCookie, hasValidSession } from "./session";
 
@@ -34,11 +34,12 @@ export async function handleAdminApi(request: Request, env: Env, path: string, c
 
   if (!(await hasValidSession(env, request))) return error("נדרשת התחברות", 401);
 
-  if (path === "/meta" && method === "GET") return json(meta());
+  if (path === "/meta" && method === "GET") return json(await meta(env));
+  if (path === "/tenants" || path.startsWith("/tenants/")) return tenantsApi(request, env, path).catch(dbError);
 
   const m = path.match(/^\/([a-z0-9-]+)\/([a-z_]+)(?:\/(\d+))?\/?$/);
   if (!m) return error("לא נמצא", 404);
-  const tenant = resolveTenant(m[1]!);
+  const tenant = await getTenant(env.DB, m[1]!);
   if (!tenant) return error("לקוח לא קיים", 404);
   const db = new TenantDb(env.DB, tenant);
   const id = m[3] ? Number(m[3]) : null;
@@ -74,12 +75,70 @@ function dbError(err: unknown): Response {
   if (msg.includes("UNIQUE")) return error("ערך כזה כבר קיים (למשל טלפון או קוד שלוחה כפולים)", 409);
   if (msg.includes("FOREIGN KEY")) return error("לא ניתן למחוק - יש רשומות מקושרות (מנויים, הזמנות או תשלומים)", 409);
   if (msg.includes("CHECK")) return error("ערך לא חוקי", 400);
-  if (msg.includes("no such column")) return error("חסרה עמודה במסד - יש להריץ את המיגרציות", 500);
   console.error("admin api error", err);
   return error("שגיאת שרת", 500);
 }
 
-function meta() {
+/** ניהול הלקוחות של הפלטפורמה (זאבי וייס וכו'): יצירה, עריכה, מפתח. */
+async function tenantsApi(request: Request, env: Env, path: string): Promise<Response> {
+  const method = request.method;
+  const m = path.match(/^\/tenants(?:\/([a-z0-9-]+))?(\/key)?\/?$/);
+  if (!m) return error("לא נמצא", 404);
+  const slug = m[1];
+
+  if (!slug && method === "GET") return json({ rows: await listTenants(env.DB) });
+
+  const body = method === "GET" ? {} : ((await request.json().catch(() => ({}))) as Record<string, unknown>);
+  const str = (k: string, max = 200) => {
+    const v = body[k];
+    return v === undefined ? undefined : v === null || String(v).trim() === "" ? null : String(v).trim().slice(0, max);
+  };
+  const mosad = str("nedarim_mosad_id", 20);
+  if (mosad && !/^\d+$/.test(mosad)) return error("מספר מוסד צריך להכיל ספרות בלבד");
+
+  if (!slug && method === "POST") {
+    const title = str("title");
+    const newSlug = str("slug", 40)?.toLowerCase();
+    if (!title) return error("חסר שם לקוח");
+    if (!newSlug || !SLUG_RE.test(newSlug) || newSlug === "tenants") {
+      return error("מזהה לא תקין: אותיות באנגלית קטנות, ספרות ומקפים, ומתחיל באות (למשל cohen-store)");
+    }
+    try {
+      const tenant = await createTenant(env.DB, {
+        slug: newSlug,
+        title,
+        nedarim_mosad_id: mosad ?? null,
+        contact_name: str("contact_name") ?? null,
+        contact_phone: str("contact_phone", 20) ?? null,
+        notes: str("notes", 2000) ?? null,
+      });
+      return json({ ok: true, tenant }, 201);
+    } catch (err) {
+      if (String(err).includes("SLUG_EXISTS")) return error("כבר קיים לקוח עם המזהה הזה", 409);
+      throw err;
+    }
+  }
+
+  if (!slug) return error("פעולה לא נתמכת", 405);
+  if (!(await getTenant(env.DB, slug))) return error("לקוח לא קיים", 404);
+
+  if (m[2] && method === "POST") return json({ ok: true, api_key: await rotateTenantKey(env.DB, slug) });
+  if (!m[2] && method === "PUT") {
+    const values: Record<string, string | number | null> = {};
+    for (const k of ["title", "contact_name", "contact_phone", "notes"]) {
+      const v = str(k, k === "notes" ? 2000 : 200);
+      if (v !== undefined) values[k] = v;
+    }
+    if (values.title === null) return error("חסר שם לקוח");
+    if (mosad !== undefined) values.nedarim_mosad_id = mosad;
+    if ("is_active" in body) values.is_active = body.is_active === true || body.is_active === 1 || body.is_active === "1" ? 1 : 0;
+    await updateTenant(env.DB, slug, values);
+    return json({ ok: true, tenant: await getTenant(env.DB, slug) });
+  }
+  return error("פעולה לא נתמכת", 405);
+}
+
+async function meta(env: Env) {
   const entities = Object.fromEntries(
     Object.entries(ENTITIES).map(([name, e]) => {
       const ent = e as Entity;
@@ -89,7 +148,7 @@ function meta() {
       ];
     }),
   );
-  return { tenants: allTenants().map((t) => ({ slug: t.slug, title: t.title })), entities };
+  return { tenants: await listTenants(env.DB), entities };
 }
 
 async function list(db: TenantDb, entity: Entity & { name: EntityName }, params: URLSearchParams) {
