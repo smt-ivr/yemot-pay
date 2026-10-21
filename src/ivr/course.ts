@@ -1,6 +1,7 @@
 import { normalizePhone } from "../lib/util";
 import { d, goToFolder, idListMessage, n, priceParts, readTap, t, yemotResponse, type Part } from "../yemot/response";
-import { V, afterPurchaseFolder, exitFolder, failResponse, resolveCourse, type IvrContext } from "./common";
+import { notify } from "../email";
+import { V, afterPurchaseFolder, askPhone, exitFolder, failResponse, resolveCourse, type IvrContext } from "./common";
 import { PROVIDER, paymentCode, paymentNotCompleted, startPayment, transactionId } from "./payment";
 
 /**
@@ -8,13 +9,14 @@ import { PROVIDER, paymentCode, paymentNotCompleted, startPayment, transactionId
  * פרמטרים מהשלוחה (api_add): key, course, [ok, exit, price, name, source]
  *
  * 1. "אין לך מנוי" / "תוקף המנוי הסתיים" + "לרכישת גישה לקורס [למשך N ימים] במחיר X" - 1, ליציאה 2.
- * 2. טלפונים: הראשון - 1 למספר המתקשר או הקשת מספר; ואז "להוספת מספר נוסף 1, להמשך 2",
- *    עד מספר הטלפונים שהוגדר בקורס. מספר שכבר יש לו מנוי לקורס - מתבקש מספר אחר.
+ * 2. טלפונים: הראשון - 1 וסולמית למספר המתקשר (בלי אישור), או הקשת מספר (עם אישור);
+ *    ואז "להוספת מספר נוסף 1, להמשך 2", עד מספר הטלפונים שהוגדר בקורס.
+ *    מספר לא תקין, כפול, או שכבר יש לו מנוי לקורס - מתבקש מספר אחר.
  * 3. סליקה בנדרים פלוס דרך ימות (credit_card). ימות חוזרת עם CreditCard_CODE ועם כל הערכים שנאספו:
  *    OK -> רק עכשיו נוצרים הרוכש, המנוי והתשלום. "רכשת בהצלחה" ומעבר לקורס.
  *    אחר -> לא נוצר כלום. יציאה.
  */
-export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
+export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<Response> {
   const resolved = await resolveCourse(db, req);
   if ("error" in resolved) {
     await db.log(req.phone, req.callId, resolved.error, { course: req.get("course") });
@@ -49,26 +51,26 @@ export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
     return yemotResponse(goToFolder(exitFolder(req)));
   }
 
-  // 2. טלפונים
+  // 2. טלפונים - כל מספר נבדק (תקין, לא כפול, בלי מנוי קיים) ומספר שהוקש ידנית מאושר
   const phones: string[] = [];
   for (let i = 1; i <= maxPhones; i++) {
-    const name = `${V.phone}${i}`;
-    const prompt: Part[] =
-      i > 1
-        ? [t("הקישו את המספר הנוסף וסולמית")]
-        : caller
-          ? [t("לשימוש במספר שממנו התקשרתם הקישו 1, למספר אחר הקישו את המספר וסולמית")]
-          : [t("הקישו מספר טלפון וסולמית")];
-    const ask = (problem: Part[] = []) =>
-      yemotResponse(readTap([...problem, ...prompt], { name, reEnter: true, min: i === 1 && caller ? 1 : 9, max: 10 }));
-
-    const raw = req.get(name);
-    if (raw === null) return ask();
-    const phone = i === 1 && raw === "1" && caller ? caller : normalizePhone(raw);
-    if (!phone) return ask([t("המספר שהוקש שגוי")]);
-    if (phones.includes(phone)) return ask([t("המספר הזה כבר הוקש")]);
-    if (await db.hasCourseAccess(phone, course.id)) return ask([t("למספר"), d(phone), t("כבר יש מנוי לקורס")]);
-    phones.push(phone);
+    const asked = await askPhone(req, {
+      base: `${V.phone}${i}`,
+      callerPhone: i === 1 ? caller : null,
+      prompt:
+        i > 1
+          ? [t("הקישו את המספר הנוסף וסולמית")]
+          : caller
+            ? [t("לשימוש במספר שממנו התקשרתם הקישו 1 וסולמית, למספר אחר הקישו את המספר וסולמית")]
+            : [t("הקישו מספר טלפון וסולמית")],
+      check: async (phone) => {
+        if (phones.includes(phone)) return [t("המספר הזה כבר הוקש")];
+        if (await db.hasCourseAccess(phone, course.id)) return [t("למספר"), d(phone), t("כבר יש מנוי לקורס")];
+        return null;
+      },
+    });
+    if ("response" in asked) return asked.response;
+    phones.push(asked.phone);
 
     if (i === maxPhones) break;
     const moreName = `${V.more}${i}`;
@@ -106,6 +108,21 @@ export async function handleCourse({ db, req }: IvrContext): Promise<Response> {
       payment: { provider: PROVIDER, transactionId: tx },
     });
     await db.log(req.phone, req.callId, "payment_success", { subscription_id: subscriptionId, course_id: course.id, price, phones });
+    waitUntil(
+      notify(
+        db,
+        "course",
+        {
+          course: course.name,
+          price: `${price} ₪`,
+          phones: phones.join(", "),
+          buyer_phone: caller ?? "חסוי",
+          validity: course.access_days ? `${course.access_days} ימים` : "לצמיתות",
+          reference: String(subscriptionId),
+        },
+        { idempotencyKey: `${db.tenant.slug}-sub-${subscriptionId}` },
+      ),
+    );
   }
   const validity: Part[] = course.access_days ? [t("המנוי בתוקף ל"), n(course.access_days), t("ימים")] : [];
   return yemotResponse(idListMessage([t(`רכשת בהצלחה את הקורס ${course.name}`), ...validity]), goToFolder(afterPurchaseFolder(req)));

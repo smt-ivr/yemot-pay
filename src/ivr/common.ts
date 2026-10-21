@@ -1,8 +1,8 @@
 import type { TenantDb } from "../db/repo";
 import type { Course, Product, ProductType } from "../db/types";
-import { parsePrice } from "../lib/util";
+import { normalizePhone, parsePrice } from "../lib/util";
 import type { YemotRequest } from "../yemot/request";
-import { goToFolder, idListMessage, t, yemotResponse } from "../yemot/response";
+import { d, goToFolder, idListMessage, readTap, t, yemotResponse, type Part } from "../yemot/response";
 
 /** שמות הערכים שנאספים בשיחה. קידומת yp_ כדי לא להתנגש בערכים אחרים בשלוחה. */
 export const V = {
@@ -21,6 +21,61 @@ export const EMPTY = "none";
 export interface IvrContext {
   db: TenantDb;
   req: YemotRequest;
+  /** משימות רקע אחרי התשובה לימות (למשל שליחת מייל), כדי שהשיחה לא תחכה */
+  waitUntil: (promise: Promise<unknown>) => void;
+}
+
+const MAX_PHONE_ATTEMPTS = 4;
+
+/**
+ * שאלת מספר טלפון עם בדיקת תקינות ואישור.
+ * כל ניסיון נשמר בשם משלו (base_1, base_2...) ואישורו ב-basec_1..., כך שימות שולחת את כל ההיסטוריה
+ * ואפשר לדעת בכל בקשה איפה המתקשר עומד.
+ * - callerPhone: הקשה על 1 = המספר שממנו התקשרו, בלי בקשת אישור.
+ * - מספר שהוקש ידנית: "הקשתם ... לאישור 1, להקשה מחדש 2".
+ * - check: בדיקה נוספת (כפילות, מנוי קיים) - מחזירה הודעה אם המספר לא מתאים.
+ */
+export async function askPhone(
+  req: YemotRequest,
+  o: { base: string; prompt: Part[]; callerPhone?: string | null; check?: (phone: string) => Promise<Part[] | null> },
+): Promise<{ phone: string } | { response: Response }> {
+  let problem: Part[] = [];
+  for (let a = 1; a <= MAX_PHONE_ATTEMPTS; a++) {
+    const name = `${o.base}_${a}`;
+    const raw = req.get(name);
+    if (raw === null) {
+      return { response: yemotResponse(readTap([...problem, ...o.prompt], { name, min: o.callerPhone ? 1 : 9, max: 10 })) };
+    }
+
+    const shortcut = raw === "1" && !!o.callerPhone;
+    const phone = shortcut ? o.callerPhone! : normalizePhone(raw);
+    if (!phone) {
+      problem = [t("המספר שהוקש אינו מספר טלפון תקין")];
+      continue;
+    }
+    const issue = o.check ? await o.check(phone) : null;
+    if (issue) {
+      problem = issue;
+      continue;
+    }
+    if (!shortcut) {
+      const confirmName = `${o.base}c_${a}`;
+      const confirm = req.get(confirmName);
+      if (confirm === null) {
+        return {
+          response: yemotResponse(
+            readTap([t("הקשתם"), d(phone), t("לאישור הקישו 1, להקשה מחדש הקישו 2")], { name: confirmName, max: 1, min: 1, digitsAllowed: ["1", "2"] }),
+          ),
+        };
+      }
+      if (confirm !== "1") {
+        problem = [];
+        continue;
+      }
+    }
+    return { phone };
+  }
+  return { response: failResponse(req, "לא התקבל מספר טלפון תקין") };
 }
 
 function extensionPath(req: YemotRequest): string[] {
@@ -50,11 +105,6 @@ export function failResponse(req: YemotRequest, message = "אירעה תקלה, 
   return yemotResponse(idListMessage([t(message)]), goToFolder(exitFolder(req)));
 }
 
-/** הפעלה מחדש של השלוחה (מנקה את הערכים שנאספו). */
-export function restartResponse(req: YemotRequest, message: string): Response {
-  const target = req.extension ? `/${req.extension}` : exitFolder(req);
-  return yemotResponse(idListMessage([t(message)]), goToFolder(target));
-}
 
 /**
  * מקור המחיר: "db" - לפי הגדרות הקורס/מוצר במסד, "params" - לפי price שנשלח מהשלוחה.
@@ -82,7 +132,7 @@ export async function resolveCourse(db: TenantDb, req: YemotRequest, opts: { all
     course = await db.createCourse({ name: req.get("name") ?? ref, ivrCode: ref, price: paramPrice! });
   }
   if (!course) return { error: "course_not_found", message: "הקורס לא נמצא" };
-  if (!course.is_active && !opts.allowInactive) return { error: "course_inactive", message: `הקורס ${course.name} אינו זמין כרגע לרכישה` };
+  if (!course.is_active && !opts.allowInactive) return { error: "course_inactive", message: `הקורס ${course.name} אינו פעיל כרגע` };
 
   return { item: course, price: source === "params" ? paramPrice! : course.price };
 }

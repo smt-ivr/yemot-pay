@@ -11,7 +11,7 @@ const text = (body: string) => new Response(body, { headers: { "content-type": "
  *   Out - יוצא בלי הודעה ועובר ל-api_goto (למשל לשלוחת הרכישה)
  * קורס לא קיים / לא פעיל / שלוחה לא מוגדרת -> גם Out: שלוחת הרכישה משמיעה למתקשר את הסיבה,
  * כדי שלא יחזור לתפריט הראשי בלי הסבר. (api_error_goto נשאר רק לתקלת שרת.)
- * פרמטרים: course, [deny=no|out] (ברירת מחדל out). לא נדרש מפתח - התשובה רק אומרת אם יש גישה.
+ * פרמטרים: client, course, [deny=no|out] (ברירת מחדל out). לא נדרש מפתח - התשובה רק אומרת אם יש גישה.
  */
 export async function handleCheck({ db, req }: IvrContext): Promise<Response> {
   const deny = text(req.get("deny") === "no" ? "NO" : "Out");
@@ -23,6 +23,11 @@ export async function handleCheck({ db, req }: IvrContext): Promise<Response> {
   const course = resolved.item;
   const caller = normalizePhone(req.phone);
 
+  // קורס לא פעיל שהוגדר "לחסום את מי שרכש" - גם מי שרכש עובר לשלוחת הרכישה, ושם שומע שהקורס לא פעיל
+  if (!course.is_active && course.on_inactive === "block") {
+    await db.log(req.phone, req.callId, "access_denied", { course_id: course.id, reason: "course_inactive_blocked" });
+    return deny;
+  }
   if (caller && (await db.hasCourseAccess(caller, course.id))) {
     await db.log(req.phone, req.callId, "access_granted", { course_id: course.id });
     return text("OK");
