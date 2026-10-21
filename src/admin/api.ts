@@ -1,17 +1,34 @@
 import { TenantDb } from "../db/repo";
+import { EMAIL_EVENTS, PLACEHOLDERS, notify, parseEmailSettings, splitEmails, validateEmailSettings } from "../email";
 import type { Env } from "../env";
 import { addDays, normalizePhone, todayIso } from "../lib/util";
-import { SLUG_RE, createTenant, getTenant, listTenants, rotateTenantKey, updateTenant } from "../tenants";
+import { getSetting, maskSecret, setSetting } from "../platform";
+import { SLUG_RE, createTenant, getTenant, listTenants, rotateTenantKey, updateTenant, type TenantConfig } from "../tenants";
 import { ENTITIES, getEntity, type Entity, type EntityName, type Field } from "./entities";
-import { checkPassword, clearSessionCookie, createSessionCookie, hasValidSession } from "./session";
+import {
+  SECTIONS,
+  can,
+  clearSessionCookie,
+  createSessionCookie,
+  getPrincipal,
+  hashPassword,
+  login,
+  parsePermissions,
+  type Principal,
+  type Section,
+} from "./session";
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
 const error = (message: string, status = 400) => json({ error: message }, status);
+const forbidden = () => error("אין לך הרשאה לפעולה הזו", 403);
 
 /**
  * API של מערכת הניהול. path הוא הנתיב אחרי /admin/api.
  * cookiePath הוא נתיב מערכת הניהול (כולל תחילית כמו /yemot-pay) לעוגיית ההתחברות.
+ *
+ * מנהל המערכת רואה הכל. משתמש של לקוח (אזור אישי) רואה רק את הלקוח שלו,
+ * ורק את האזורים שקיבל עליהם הרשאה (צפייה / עריכה).
  */
 export async function handleAdminApi(request: Request, env: Env, path: string, cookiePath: string): Promise<Response> {
   const method = request.method;
@@ -21,39 +38,49 @@ export async function handleAdminApi(request: Request, env: Env, path: string, c
   }
 
   if (path === "/login" && method === "POST") {
-    const body = (await request.json().catch(() => ({}))) as { password?: unknown };
-    if (!(await checkPassword(env, body.password))) {
+    const body = (await request.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
+    const userId = await login(env, body.username, body.password);
+    if (userId === null) {
       await new Promise((r) => setTimeout(r, 600));
-      return error("סיסמה שגויה", 401);
+      return error("שם משתמש או סיסמה שגויים", 401);
     }
-    return json({ ok: true }, 200, { "set-cookie": await createSessionCookie(env, cookiePath) });
+    return json({ ok: true }, 200, { "set-cookie": await createSessionCookie(env, cookiePath, userId) });
   }
   if (path === "/logout" && method === "POST") {
     return json({ ok: true }, 200, { "set-cookie": clearSessionCookie(cookiePath) });
   }
 
-  if (!(await hasValidSession(env, request))) return error("נדרשת התחברות", 401);
-
-  if (path === "/meta" && method === "GET") return json(await meta(env));
-  if (path === "/tenants" || path.startsWith("/tenants/")) return tenantsApi(request, env, path).catch(dbError);
-
-  const m = path.match(/^\/([a-z0-9-]+)\/([a-z_]+)(?:\/(\d+))?\/?$/);
-  if (!m) return error("לא נמצא", 404);
-  const tenant = await getTenant(env.DB, m[1]!);
-  if (!tenant) return error("לקוח לא קיים", 404);
-  const db = new TenantDb(env.DB, tenant);
-  const id = m[3] ? Number(m[3]) : null;
-
-  if (m[2] === "stats" && method === "GET" && id === null) return json(await stats(db));
-
-  const entity = getEntity(m[2]!);
-  if (!entity) return error("לא נמצא", 404);
+  const principal = await getPrincipal(env, request);
+  if (!principal) return error("נדרשת התחברות", 401);
 
   try {
+    if (path === "/meta" && method === "GET") return json(await meta(env, principal));
+    if (path === "/platform") return principal.role === "admin" ? await platformApi(request, env) : forbidden();
+    if (path === "/tenants" || path.startsWith("/tenants/")) return principal.role === "admin" ? await tenantsApi(request, env, path) : forbidden();
+
+    const m = path.match(/^\/([a-z0-9-]+)\/([a-z_]+)(?:\/(\d+|[a-z_]+))?\/?$/);
+    if (!m) return error("לא נמצא", 404);
+    const tenant = await getTenant(env.DB, m[1]!);
+    if (!tenant) return error("לקוח לא קיים", 404);
+    if (principal.role === "user" && principal.tenant.id !== tenant.id) return forbidden();
+    const db = new TenantDb(env.DB, tenant);
+    const action = m[2]!;
+    const sub = m[3];
+
+    if (action === "stats" && method === "GET" && !sub) return can(principal, "dashboard", "view") ? json(await stats(db)) : forbidden();
+    if (action === "email") return await emailApi(request, principal, db, sub);
+    if (action === "info" && method === "GET") return can(principal, "settings", "view") ? json(tenantInfo(tenant)) : forbidden();
+
+    const entity = getEntity(action);
+    if (!entity) return error("לא נמצא", 404);
+    const id = sub && /^\d+$/.test(sub) ? Number(sub) : null;
+    if (sub && id === null) return error("לא נמצא", 404);
+    const section = entity.name as Section;
+    if (!can(principal, section, isMutation ? "edit" : "view")) return forbidden();
+
     if (method === "GET" && id === null) return json(await list(db, entity, new URL(request.url).searchParams));
     if (method === "GET" && id !== null) return await getOne(db, entity, id);
     if (entity.readOnly) return error("לקריאה בלבד", 405);
-
     if (method === "POST" && id === null) {
       if (entity.noCreate) return error("לא ניתן ליצור ידנית", 405);
       return await create(db, entity, await request.json());
@@ -71,21 +98,110 @@ export async function handleAdminApi(request: Request, env: Env, path: string, c
 
 function dbError(err: unknown): Response {
   const msg = String(err);
-  if (msg.includes("UNIQUE")) return error("ערך כזה כבר קיים (למשל טלפון או קוד שלוחה כפולים)", 409);
+  if (msg.includes("UNIQUE")) return error("ערך כזה כבר קיים (למשל טלפון, קוד שלוחה או שם משתמש כפולים)", 409);
   if (msg.includes("FOREIGN KEY")) return error("לא ניתן למחוק - יש רשומות מקושרות (מנויים, הזמנות או תשלומים)", 409);
   if (msg.includes("CHECK")) return error("ערך לא חוקי", 400);
   console.error("admin api error", err);
   return error("שגיאת שרת", 500);
 }
 
-/** ניהול הלקוחות של הפלטפורמה (זאבי וייס וכו'): יצירה, עריכה, מפתח. */
+/** מה שמשתמש באזור האישי צריך כדי להגדיר שלוחות (מספר לקוח, מפתח) */
+function tenantInfo(t: TenantConfig) {
+  return {
+    slug: t.slug,
+    title: t.title,
+    client_number: t.client_number,
+    api_key: t.api_key,
+    nedarim_mosad_id: t.nedarim_mosad_id,
+  };
+}
+
+/** פרטי לקוח לרשימת הלקוחות של מנהל המערכת (בלי הגדרות המייל הגולמיות) */
+function tenantRow(t: TenantConfig) {
+  const { email_settings, ...rest } = t;
+  return { ...rest, email_ready: !!parseEmailSettings(email_settings).from_email };
+}
+
+async function meta(env: Env, p: Principal) {
+  const entities = Object.fromEntries(
+    Object.entries(ENTITIES).map(([name, e]) => {
+      const ent = e as Entity;
+      return [
+        name,
+        { label: ent.label, fields: ent.fields, columns: ent.columns, filters: ent.filters, readOnly: !!ent.readOnly, noCreate: !!ent.noCreate, deletable: !!ent.deletable },
+      ];
+    }),
+  );
+  const tenants = p.role === "admin" ? (await listTenants(env.DB)).map(tenantRow) : [tenantRow(p.tenant)];
+  const permissions = Object.fromEntries(
+    SECTIONS.map(({ key }) => [key, can(p, key, "edit") ? "edit" : can(p, key, "view") ? "view" : "none"]),
+  );
+  return {
+    me: { role: p.role, name: p.name, username: p.role === "user" ? p.user.username : null },
+    permissions,
+    sections: SECTIONS,
+    tenants,
+    entities,
+    email: { events: EMAIL_EVENTS, placeholders: PLACEHOLDERS },
+  };
+}
+
+/** הגדרות מערכת (רק למנהל): מפתח Resend. המפתח לא חוזר במלואו. */
+async function platformApi(request: Request, env: Env): Promise<Response> {
+  if (request.method === "GET") return json({ resend_api_key: maskSecret(await getSetting(env.DB, "resend_api_key")) });
+  if (request.method !== "PUT") return error("פעולה לא נתמכת", 405);
+  const body = (await request.json().catch(() => ({}))) as { resend_api_key?: unknown };
+  if (typeof body.resend_api_key === "string") {
+    const key = body.resend_api_key.trim();
+    if (key && !/^re_[A-Za-z0-9_]{8,}$/.test(key)) return error("מפתח Resend מתחיל ב-re_");
+    await setSetting(env.DB, "resend_api_key", key || null);
+  }
+  return json({ ok: true, resend_api_key: maskSecret(await getSetting(env.DB, "resend_api_key")) });
+}
+
+/** הגדרות מייל של לקוח, ושליחת מייל בדיקה */
+async function emailApi(request: Request, p: Principal, db: TenantDb, sub: string | undefined): Promise<Response> {
+  const method = request.method;
+  if (!sub && method === "GET") {
+    if (!can(p, "settings", "view")) return forbidden();
+    return json({ settings: parseEmailSettings(db.tenant.email_settings), resend_ready: !!(await getSetting(db.db, "resend_api_key")) });
+  }
+  if (!can(p, "settings", "edit")) return forbidden();
+  if (!sub && method === "PUT") {
+    const v = validateEmailSettings(await request.json().catch(() => null));
+    if ("error" in v) return error(v.error);
+    await updateTenant(db.db, db.tenant.slug, { email_settings: JSON.stringify(v.settings) });
+    return json({ ok: true, settings: v.settings });
+  }
+  if (sub === "test" && method === "POST") {
+    const body = (await request.json().catch(() => ({}))) as { event?: string; to?: string };
+    const event = EMAIL_EVENTS.find((e) => e.key === body.event)?.key ?? "meeting";
+    const to = splitEmails(body.to ?? "");
+    const sample = {
+      product: "פגישת ייעוץ (דוגמה)",
+      course: "קורס לדוגמה",
+      price: "250 ₪",
+      buyer_phone: "0501234567",
+      contact_phone: "0527654321",
+      phones: "0501234567, 0527654321",
+      validity: "365 ימים",
+      reference: "1234",
+    };
+    const result = await notify(db, event, sample, { test: true, overrideTo: to.length ? to : undefined });
+    return result.ok ? json({ ok: true, id: result.id }) : error(`המייל לא נשלח: ${result.error}`, 502);
+  }
+  return error("פעולה לא נתמכת", 405);
+}
+
+/** ניהול הלקוחות של הפלטפורמה (רק למנהל): יצירה, עריכה, מפתח, ומשתמשי האזור האישי שלהם. */
 async function tenantsApi(request: Request, env: Env, path: string): Promise<Response> {
   const method = request.method;
-  const m = path.match(/^\/tenants(?:\/([a-z0-9-]+))?(\/key)?\/?$/);
+  const m = path.match(/^\/tenants(?:\/([a-z0-9-]+))?(?:\/(key|users)(?:\/(\d+))?)?\/?$/);
   if (!m) return error("לא נמצא", 404);
   const slug = m[1];
+  const sub = m[2];
 
-  if (!slug && method === "GET") return json({ rows: await listTenants(env.DB) });
+  if (!slug && method === "GET") return json({ rows: (await listTenants(env.DB)).map(tenantRow) });
 
   const body = method === "GET" ? {} : ((await request.json().catch(() => ({}))) as Record<string, unknown>);
   const str = (k: string, max = 200) => {
@@ -94,6 +210,11 @@ async function tenantsApi(request: Request, env: Env, path: string): Promise<Res
   };
   const mosad = str("nedarim_mosad_id", 20);
   if (mosad && !/^\d+$/.test(mosad)) return error("מספר מוסד צריך להכיל ספרות בלבד");
+  const clientRaw = str("client_number", 9);
+  if (clientRaw && !/^[1-9]\d{0,8}$/.test(clientRaw)) return error("מספר לקוח צריך להיות מספר חיובי");
+  const clientNumber: number | null | undefined = clientRaw ? Number(clientRaw) : (clientRaw as null | undefined);
+  const contactPhone = str("contact_phone", 20);
+  if (contactPhone && !normalizePhone(contactPhone)) return error("טלפון איש הקשר אינו תקין");
 
   if (!slug && method === "POST") {
     const title = str("title");
@@ -106,48 +227,106 @@ async function tenantsApi(request: Request, env: Env, path: string): Promise<Res
       const tenant = await createTenant(env.DB, {
         slug: newSlug,
         title,
+        client_number: clientNumber ?? null,
         nedarim_mosad_id: mosad ?? null,
         contact_name: str("contact_name") ?? null,
-        contact_phone: str("contact_phone", 20) ?? null,
+        contact_phone: contactPhone ? normalizePhone(contactPhone) : null,
         notes: str("notes", 2000) ?? null,
       });
-      return json({ ok: true, tenant }, 201);
+      return json({ ok: true, tenant: tenantRow(tenant) }, 201);
     } catch (err) {
       if (String(err).includes("SLUG_EXISTS")) return error("כבר קיים לקוח עם המזהה הזה", 409);
+      if (String(err).includes("CLIENT_NUMBER_EXISTS")) return error("מספר הלקוח הזה כבר תפוס", 409);
       throw err;
     }
   }
 
   if (!slug) return error("פעולה לא נתמכת", 405);
-  if (!(await getTenant(env.DB, slug))) return error("לקוח לא קיים", 404);
+  const tenant = await getTenant(env.DB, slug);
+  if (!tenant) return error("לקוח לא קיים", 404);
 
-  if (m[2] && method === "POST") return json({ ok: true, api_key: await rotateTenantKey(env.DB, slug) });
-  if (!m[2] && method === "PUT") {
+  if (sub === "key" && method === "POST") return json({ ok: true, api_key: await rotateTenantKey(env.DB, slug) });
+  if (sub === "users") return usersApi(method, env, tenant, m[3] ? Number(m[3]) : null, body);
+
+  if (!sub && method === "PUT") {
     const values: Record<string, string | number | null> = {};
-    for (const k of ["title", "contact_name", "contact_phone", "notes"]) {
+    for (const k of ["title", "contact_name", "notes"]) {
       const v = str(k, k === "notes" ? 2000 : 200);
       if (v !== undefined) values[k] = v;
     }
     if (values.title === null) return error("חסר שם לקוח");
+    if (contactPhone !== undefined) values.contact_phone = contactPhone ? normalizePhone(contactPhone) : null;
     if (mosad !== undefined) values.nedarim_mosad_id = mosad;
+    if (clientNumber !== undefined) {
+      if (clientNumber === null) return error("חסר מספר לקוח");
+      const taken = await env.DB.prepare("SELECT 1 FROM tenants WHERE client_number = ? AND id != ?").bind(clientNumber, tenant.id).first();
+      if (taken) return error("מספר הלקוח הזה כבר תפוס", 409);
+      values.client_number = clientNumber;
+    }
     if ("is_active" in body) values.is_active = body.is_active === true || body.is_active === 1 || body.is_active === "1" ? 1 : 0;
     await updateTenant(env.DB, slug, values);
-    return json({ ok: true, tenant: await getTenant(env.DB, slug) });
+    return json({ ok: true, tenant: tenantRow((await getTenant(env.DB, slug))!) });
   }
   return error("פעולה לא נתמכת", 405);
 }
 
-async function meta(env: Env) {
-  const entities = Object.fromEntries(
-    Object.entries(ENTITIES).map(([name, e]) => {
-      const ent = e as Entity;
-      return [
-        name,
-        { label: ent.label, fields: ent.fields, columns: ent.columns, filters: ent.filters, readOnly: !!ent.readOnly, noCreate: !!ent.noCreate, deletable: !!ent.deletable },
-      ];
-    }),
-  );
-  return { tenants: await listTenants(env.DB), entities };
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,39}$/;
+
+/** משתמשי האזור האישי של לקוח, וההרשאות שלהם */
+async function usersApi(method: string, env: Env, tenant: TenantConfig, id: number | null, body: Record<string, unknown>): Promise<Response> {
+  const db = env.DB;
+  const cleanPermissions = (raw: unknown) => JSON.stringify(parsePermissions(JSON.stringify(raw ?? {})));
+
+  if (method === "GET" && id === null) {
+    const rows = await db
+      .prepare("SELECT id, username, display_name, permissions, is_active, last_login_at, created_at FROM portal_users WHERE tenant_id = ? ORDER BY id")
+      .bind(tenant.id)
+      .all();
+    return json({ rows: rows.results.map((r) => ({ ...r, permissions: parsePermissions(r.permissions as string) })) });
+  }
+
+  const password = typeof body.password === "string" ? body.password : "";
+  if (password && password.length < 8) return error("סיסמה צריכה להיות באורך 8 תווים לפחות");
+  const displayName = typeof body.display_name === "string" ? body.display_name.trim().slice(0, 100) : undefined;
+
+  if (method === "POST" && id === null) {
+    const username = typeof body.username === "string" ? body.username.trim().toLowerCase() : "";
+    if (!USERNAME_RE.test(username)) return error("שם משתמש: 3-40 תווים, אותיות באנגלית, ספרות, נקודה, מקף או קו תחתון");
+    if (!password) return error("חסרה סיסמה");
+    const { hash, salt } = await hashPassword(password);
+    const row = await db
+      .prepare(
+        `INSERT INTO portal_users (tenant_id, username, display_name, password_hash, password_salt, permissions, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      )
+      .bind(tenant.id, username, displayName || null, hash, salt, cleanPermissions(body.permissions), body.is_active === false ? 0 : 1)
+      .first<{ id: number }>();
+    return json({ ok: true, id: row!.id }, 201);
+  }
+
+  if (id === null) return error("פעולה לא נתמכת", 405);
+  const exists = await db.prepare("SELECT 1 FROM portal_users WHERE id = ? AND tenant_id = ?").bind(id, tenant.id).first();
+  if (!exists) return error("משתמש לא נמצא", 404);
+
+  if (method === "DELETE") {
+    await db.prepare("DELETE FROM portal_users WHERE id = ?").bind(id).run();
+    return json({ ok: true });
+  }
+  if (method === "PUT") {
+    const sets: string[] = [];
+    const binds: unknown[] = [];
+    if (displayName !== undefined) sets.push("display_name = ?"), binds.push(displayName || null);
+    if ("permissions" in body) sets.push("permissions = ?"), binds.push(cleanPermissions(body.permissions));
+    if ("is_active" in body) sets.push("is_active = ?"), binds.push(body.is_active === true || body.is_active === 1 ? 1 : 0);
+    if (password) {
+      const { hash, salt } = await hashPassword(password);
+      sets.push("password_hash = ?", "password_salt = ?");
+      binds.push(hash, salt);
+    }
+    if (sets.length) await db.prepare(`UPDATE portal_users SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, id).run();
+    return json({ ok: true });
+  }
+  return error("פעולה לא נתמכת", 405);
 }
 
 async function list(db: TenantDb, entity: Entity & { name: EntityName }, params: URLSearchParams) {
@@ -218,12 +397,17 @@ function validate(fields: Field[], body: unknown, partial: boolean): { values: V
 
   for (const f of fields) {
     if (!(f.name in input)) {
-      if (!partial && f.required) return { error: `חסר שדה: ${f.label}` };
+      if (!partial && f.default !== undefined) values[f.name] = f.default;
+      else if (!partial && f.required) return { error: `חסר שדה: ${f.label}` };
       continue;
     }
     const raw = input[f.name];
     const empty = raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "");
     if (empty) {
+      if (f.default !== undefined) {
+        values[f.name] = f.default;
+        continue;
+      }
       if (f.required) return { error: `חסר שדה: ${f.label}` };
       values[f.name] = null;
       continue;
@@ -431,17 +615,21 @@ async function update(db: TenantDb, entity: Entity & { name: EntityName }, id: n
 async function stats(db: TenantDb) {
   const t = db.t;
   const one = (sql: string) => db.db.prepare(sql);
-  const [counts, recent] = await db.db.batch([
+  const [counts, recent, daily, topCourses] = await db.db.batch([
     one(`SELECT
       (SELECT count(*) FROM ${t.customers}) AS customers,
       (SELECT count(*) FROM ${t.courses} WHERE is_active = 1) AS courses,
       (SELECT count(*) FROM ${t.subscriptions} WHERE status = 'active' AND (end_date IS NULL OR end_date >= date('now'))) AS active_subscriptions,
-      (SELECT count(*) FROM ${t.subscriptions} WHERE status = 'pending') AS pending_subscriptions,
+      (SELECT count(*) FROM ${t.subscriptions} WHERE created_at >= datetime('now', '-30 days')) AS new_subscriptions_30d,
       (SELECT count(*) FROM ${t.orders} WHERE status IN ('paid','scheduled')) AS open_orders,
       (SELECT COALESCE(sum(amount), 0) FROM ${t.payments} WHERE status = 'success') AS revenue_total,
       (SELECT COALESCE(sum(amount), 0) FROM ${t.payments} WHERE status = 'success' AND created_at >= datetime('now', '-30 days')) AS revenue_30d,
-      (SELECT count(*) FROM ${t.payments} WHERE status = 'failed' AND created_at >= datetime('now', '-30 days')) AS failed_30d`),
-    one(`${(ENTITIES.payments as Entity).select(t)} ORDER BY x.id DESC LIMIT 10`),
+      (SELECT count(*) FROM ${t.ivr_log} WHERE action = 'purchase_offer' AND created_at >= datetime('now', '-30 days')) AS offers_30d`),
+    one(`${(ENTITIES.payments as Entity).select(t)} ORDER BY x.id DESC LIMIT 8`),
+    one(`SELECT date(created_at) AS day, COALESCE(sum(amount), 0) AS amount, count(*) AS count FROM ${t.payments}
+         WHERE status = 'success' AND created_at >= date('now', '-29 days') GROUP BY day ORDER BY day`),
+    one(`SELECT c.name, count(s.id) AS subs FROM ${t.courses} c LEFT JOIN ${t.subscriptions} s ON s.course_id = c.id AND s.status = 'active'
+         GROUP BY c.id ORDER BY subs DESC LIMIT 5`),
   ]);
-  return { counts: counts!.results[0], recentPayments: recent!.results };
+  return { counts: counts!.results[0], recentPayments: recent!.results, daily: daily!.results, topCourses: topCourses!.results };
 }

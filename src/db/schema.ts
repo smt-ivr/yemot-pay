@@ -22,6 +22,7 @@ export function tenantTablesSql(prefix: string): string[] {
       max_phones INTEGER NOT NULL DEFAULT 2,
       is_active INTEGER NOT NULL DEFAULT 1,
       access_days INTEGER,
+      on_inactive TEXT NOT NULL DEFAULT 'keep',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
     `CREATE TABLE IF NOT EXISTS ${p}products (

@@ -6,7 +6,7 @@ import { handleCheck } from "./ivr/check";
 import { failResponse, type IvrContext } from "./ivr/common";
 import { handleCourse } from "./ivr/course";
 import { handleProduct } from "./ivr/product";
-import { ensurePlatform, getTenant, keyMatches } from "./tenants";
+import { ensurePlatform, getTenant, getTenantByClient, keyMatches, type TenantConfig } from "./tenants";
 import { parseYemotRequest } from "./yemot/request";
 
 /**
@@ -21,7 +21,10 @@ const IVR_HANDLERS: Record<string, (ctx: IvrContext) => Promise<Response>> = {
   product: handleProduct,
 };
 
-const IVR_ROUTE = /^\/ivr\/([a-z0-9-]+)\/([a-z0-9-]+)\/?$/;
+/** /ivr/check?client=1&course=5 - הלקוח לפי מספר לקוח בפרמטר */
+const IVR_ROUTE = /^\/ivr\/([a-z]+)\/?$/;
+/** הצורה הקודמת: /ivr/zeevi-weiss/check - נשארת לשלוחות שכבר הוגדרו כך */
+const IVR_LEGACY_ROUTE = /^\/ivr\/([a-z0-9-]+)\/([a-z0-9-]+)\/?$/;
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const text = (body: string) => new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
@@ -33,7 +36,7 @@ function splitBase(pathname: string): { base: string; path: string } {
   return { base: "", path: pathname };
 }
 
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
+export async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const { base, path } = splitBase(new URL(request.url).pathname);
 
   if (path === "/health") return json({ ok: true });
@@ -53,18 +56,26 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   await ensurePlatform(env);
   if (path.startsWith("/admin/api/")) return handleAdminApi(request, env, path.slice("/admin/api".length), `${base}/admin`);
 
-  const match = IVR_ROUTE.exec(path);
-  if (match) return handleIvr(request, env, match[1]!, match[2]!);
+  const route = IVR_ROUTE.exec(path);
+  if (route) return handleIvr(request, env, ctx, route[1]!, (req) => getTenantByClient(env.DB, req.get("client")));
+  const legacy = IVR_LEGACY_ROUTE.exec(path);
+  if (legacy) return handleIvr(request, env, ctx, legacy[2]!, () => getTenant(env.DB, legacy[1]!));
   return json({ error: "not_found" }, 404);
 }
 
 /** כל תשובה לימות היא בפורמט של ימות - גם בשגיאה - כדי שהמתקשר ישמע הודעה ולא "אין מענה משרת API". */
-async function handleIvr(request: Request, env: Env, tenantSlug: string, action: string): Promise<Response> {
+async function handleIvr(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  action: string,
+  findTenant: (req: Awaited<ReturnType<typeof parseYemotRequest>>) => Promise<TenantConfig | null>,
+): Promise<Response> {
   const req = await parseYemotRequest(request);
   const isCheck = action === "check";
   const handler = Object.hasOwn(IVR_HANDLERS, action) ? IVR_HANDLERS[action]! : null;
 
-  const tenant = await getTenant(env.DB, tenantSlug);
+  const tenant = await findTenant(req);
   if (!tenant || !tenant.is_active || (!isCheck && !handler)) {
     return isCheck ? text("ERROR") : failResponse(req, "השלוחה לא הוגדרה כראוי");
   }
@@ -75,13 +86,14 @@ async function handleIvr(request: Request, env: Env, tenantSlug: string, action:
       await db.log(req.phone, req.callId, "hangup", { endpoint: action });
       return text("");
     }
-    if (isCheck) return await handleCheck({ db, req });
+    const waitUntil = (p: Promise<unknown>) => ctx.waitUntil(p.catch((err) => console.error("background task failed", err)));
+    if (isCheck) return await handleCheck({ db, req, waitUntil });
 
     if (!(await keyMatches(tenant, req.get("key")))) {
       await db.log(req.phone, req.callId, "config_error", { endpoint: action, problem: "wrong_or_missing_key" });
       return failResponse(req, "השלוחה לא הוגדרה כראוי");
     }
-    return await handler!({ db, req });
+    return await handler!({ db, req, waitUntil });
   } catch (err) {
     console.error("ivr handler error", err);
     await db.log(req.phone, req.callId, "error", { endpoint: action, message: String(err) }).catch(() => {});

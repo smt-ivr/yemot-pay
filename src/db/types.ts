@@ -20,6 +20,8 @@ export interface Course {
   is_active: number;
   /** תוקף הגישה בימים מיום התשלום. NULL = לצמיתות */
   access_days?: number | null;
+  /** כשהקורס לא פעיל: keep = מי שרכש ממשיך לקבל גישה, block = נחסם */
+  on_inactive?: "keep" | "block";
 }
 
 export interface Product {

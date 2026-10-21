@@ -2,7 +2,7 @@
  * בקשה ממודול API של ימות המשיח.
  * ימות שולחת ApiPhone, ApiCallId, ApiDID, ApiExtension, ובניתוק גם hangup=yes.
  * בתוך אותה שלוחה כל בקשה חוזרת עם כל הערכים שנאספו עד עכשיו (לפי val_name),
- * וגם עם פרמטרים קבועים שהוגדרו בשלוחה ב-api_add_N=name=value.
+ * וגם עם פרמטרים קבועים שהוגדרו בשלוחה ב-api_add_N=name=value או בתוך כתובת api_link עצמה.
  * ברירת מחדל GET, או POST כשמוגדר api_url_post=yes.
  */
 export interface YemotRequest {
@@ -16,7 +16,10 @@ export interface YemotRequest {
 
 export async function parseYemotRequest(request: Request): Promise<YemotRequest> {
   const params = new Map<string, string>();
-  new URL(request.url).searchParams.forEach((v, k) => params.set(k, v));
+  // הפרמטרים יכולים להיות כתובים בתוך api_link (למשל ?client=1&course=5). אם ימות מוסיפה
+  // את הפרמטרים שלה עם ? נוסף, ה-? השני הופך ל-& כדי שלא יידבק לערך הקודם.
+  const search = new URL(request.url).search.replace(/^\?/, "").replace(/\?/g, "&");
+  new URLSearchParams(search).forEach((v, k) => params.set(k, v));
 
   if (request.method === "POST") {
     const type = request.headers.get("content-type") ?? "";

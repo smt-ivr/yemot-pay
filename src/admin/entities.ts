@@ -12,6 +12,8 @@ export interface Field {
   options?: { value: string; label: string }[];
   /** עבור ref: לאיזו ישות מפנה */
   ref?: EntityName;
+  /** ערך ברירת מחדל כשהשדה ריק ביצירה */
+  default?: string;
   /** לא מוצג בטבלה, רק בטופס */
   formOnly?: boolean;
   help?: string;
@@ -85,7 +87,17 @@ export const ENTITIES: Record<EntityName, Entity> = {
       { name: "price", label: "מחיר", type: "real", required: true },
       { name: "access_days", label: "תוקף גישה (ימים)", type: "int", help: "ריק = לצמיתות. למשל 365 = שנה מיום הרכישה" },
       { name: "max_phones", label: "כמה טלפונים לכל רכישה", type: "int", help: "כמה מספרי טלפון הרוכש יכול לשייך לקורס" },
-      yesNo("is_active", "פעיל"),
+      yesNo("is_active", "פעיל (פתוח לרכישה)"),
+      {
+        name: "on_inactive",
+        label: "כשהקורס לא פעיל - מה עם מי שכבר רכש?",
+        type: "enum",
+        default: "keep",
+        options: [
+          { value: "keep", label: "ממשיך לקבל גישה" },
+          { value: "block", label: "נחסם, ושומע שהקורס אינו פעיל" },
+        ],
+      },
       { name: "description", label: "תיאור", type: "longtext", formOnly: true },
     ],
     columns: [

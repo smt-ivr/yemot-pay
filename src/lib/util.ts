@@ -1,9 +1,10 @@
-/** מנרמל טלפון ישראלי לפורמט 0XXXXXXXXX. מחזיר null אם המספר לא תקין. */
+/** מנרמל טלפון ישראלי (972 -> 0) ובודק שהוא מספר אמיתי. מחזיר null אם המספר לא תקין. */
 export function normalizePhone(raw: string | null | undefined): string | null {
   if (!raw) return null;
   let digits = raw.replace(/\D/g, "");
   if (digits.startsWith("972")) digits = "0" + digits.slice(3);
-  return /^0\d{8,9}$/.test(digits) ? digits : null;
+  // נייד 05X ו-07X (10 ספרות), קווי 02/03/04/08/09 (9 ספרות)
+  return /^(?:05\d{8}|07[2-9]\d{7}|0[23489][2-9]\d{6})$/.test(digits) ? digits : null;
 }
 
 /** מחיר חיובי עם עד 2 ספרות אחרי הנקודה. */

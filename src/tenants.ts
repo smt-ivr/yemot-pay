@@ -4,8 +4,10 @@ import type { Env } from "./env";
 /** לקוח של הפלטפורמה (למשל זאבי וייס). נשמר בטבלה tenants ומנוהל ממערכת הניהול. */
 export interface TenantConfig {
   id: number;
-  /** המזהה שמופיע בנתיב ה-URL */
+  /** מזהה פנימי באנגלית (ממנו נגזרת קידומת הטבלאות) */
   slug: string;
+  /** מספר הלקוח - מופיע בכתובות של ימות (client=...) */
+  client_number: number;
   /** שם לתצוגה */
   title: string;
   /** קידומת הטבלאות במסד */
@@ -17,6 +19,8 @@ export interface TenantConfig {
   contact_name: string | null;
   contact_phone: string | null;
   notes: string | null;
+  /** הגדרות מייל (JSON) - ראו email.ts */
+  email_settings: string | null;
   is_active: number;
   created_at: string;
 }
@@ -33,6 +37,11 @@ export function generateKey(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function ensureColumn(db: D1Database, table: string, column: string, ddl: string): Promise<void> {
+  const exists = await db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ?").bind(table, column).first();
+  if (!exists) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`).run();
+}
+
 function toConfig(row: TenantConfig): TenantConfig {
   if (!SLUG_RE.test(row.slug) || !PREFIX_RE.test(row.prefix)) throw new Error(`Invalid tenant row: ${row.slug}`);
   return row;
@@ -42,7 +51,8 @@ let ready: Promise<void> | null = null;
 
 /**
  * מכין את המסד בפעם הראשונה בכל מופע של ה-Worker:
- * טבלת tenants, הלקוח הראשון (זאבי וייס) ועמודת access_days בקורסים.
+ * טבלאות הפלטפורמה (tenants, platform_settings, portal_users), הלקוח הראשון (זאבי וייס),
+ * ועמודות שנוספו לטבלאות הלקוחות.
  */
 export function ensurePlatform(env: Env): Promise<void> {
   ready ??= setup(env).catch((err) => {
@@ -85,12 +95,44 @@ export async function setup(env: Env): Promise<void> {
     .bind(legacyKey ?? generateKey())
     .run();
 
+  await ensureColumn(db, "tenants", "client_number", "INTEGER");
+  await ensureColumn(db, "tenants", "email_settings", "TEXT");
+  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_client_number ON tenants(client_number)").run();
+  // מספר לקוח לכל מי שעדיין אין לו (זאבי וייס מקבל 1)
+  while (await db.prepare("SELECT 1 FROM tenants WHERE client_number IS NULL").first()) {
+    await db
+      .prepare(
+        `UPDATE tenants SET client_number = (SELECT COALESCE(MAX(client_number), 0) + 1 FROM tenants)
+         WHERE id = (SELECT id FROM tenants WHERE client_number IS NULL ORDER BY id LIMIT 1)`,
+      )
+      .run();
+  }
+
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT)`),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS portal_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+        username TEXT NOT NULL UNIQUE,
+        display_name TEXT,
+        password_hash TEXT NOT NULL,
+        password_salt TEXT NOT NULL,
+        permissions TEXT NOT NULL DEFAULT '{}',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        last_login_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+    ),
+  ]);
+
   for (const tenant of await listTenants(db)) {
     const table = `${tenant.prefix}courses`;
     const exists = await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").bind(table).first();
     if (!exists) continue;
-    const col = await db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = 'access_days'").bind(table).first();
-    if (!col) await db.prepare(`ALTER TABLE ${table} ADD COLUMN access_days INTEGER`).run();
+    await ensureColumn(db, table, "access_days", "INTEGER");
+    // מה קורה למי שכבר רכש כשהקורס לא פעיל: keep = ממשיך לקבל גישה, block = נחסם (ושומע הסבר)
+    await ensureColumn(db, table, "on_inactive", "TEXT NOT NULL DEFAULT 'keep'");
 
     // בטבלה המקורית מותרים רק 2 טלפונים (slot IN (1,2)). בונים אותה מחדש בלי ההגבלה, עם כל הנתונים.
     const phones = `${tenant.prefix}subscription_phones`;
@@ -114,6 +156,17 @@ export async function listTenants(db: D1Database): Promise<TenantConfig[]> {
   return rows.results.map(toConfig);
 }
 
+export async function getTenantByClient(db: D1Database, clientNumber: string | null): Promise<TenantConfig | null> {
+  if (!clientNumber || !/^\d{1,9}$/.test(clientNumber)) return null;
+  const row = await db.prepare("SELECT * FROM tenants WHERE client_number = ?").bind(Number(clientNumber)).first<TenantConfig>();
+  return row ? toConfig(row) : null;
+}
+
+export async function getTenantById(db: D1Database, id: number): Promise<TenantConfig | null> {
+  const row = await db.prepare("SELECT * FROM tenants WHERE id = ?").bind(id).first<TenantConfig>();
+  return row ? toConfig(row) : null;
+}
+
 export async function getTenant(db: D1Database, slug: string): Promise<TenantConfig | null> {
   if (!SLUG_RE.test(slug)) return null;
   const row = await db.prepare("SELECT * FROM tenants WHERE slug = ?").bind(slug).first<TenantConfig>();
@@ -123,6 +176,7 @@ export async function getTenant(db: D1Database, slug: string): Promise<TenantCon
 export interface TenantInput {
   slug: string;
   title: string;
+  client_number?: number | null;
   nedarim_mosad_id?: string | null;
   contact_name?: string | null;
   contact_phone?: string | null;
@@ -136,18 +190,32 @@ export async function createTenant(db: D1Database, input: TenantInput): Promise<
   if (!PREFIX_RE.test(prefix) || prefix.startsWith("sqlite_") || prefix === "tenants_") throw new Error("INVALID_SLUG");
   if (await getTenant(db, input.slug)) throw new Error("SLUG_EXISTS");
 
+  if (input.client_number && (await db.prepare("SELECT 1 FROM tenants WHERE client_number = ?").bind(input.client_number).first())) {
+    throw new Error("CLIENT_NUMBER_EXISTS");
+  }
+
   await db.batch(tenantTablesSql(prefix).map((sql) => db.prepare(sql)));
   await db
     .prepare(
-      `INSERT INTO tenants (slug, title, prefix, api_key, nedarim_mosad_id, contact_name, contact_phone, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tenants (slug, title, prefix, api_key, client_number, nedarim_mosad_id, contact_name, contact_phone, notes)
+       VALUES (?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(client_number), 0) + 1 FROM tenants)), ?, ?, ?, ?)`,
     )
-    .bind(input.slug, input.title, prefix, generateKey(), input.nedarim_mosad_id ?? null, input.contact_name ?? null, input.contact_phone ?? null, input.notes ?? null)
+    .bind(
+      input.slug,
+      input.title,
+      prefix,
+      generateKey(),
+      input.client_number ?? null,
+      input.nedarim_mosad_id ?? null,
+      input.contact_name ?? null,
+      input.contact_phone ?? null,
+      input.notes ?? null,
+    )
     .run();
   return (await getTenant(db, input.slug))!;
 }
 
-const EDITABLE = ["title", "nedarim_mosad_id", "contact_name", "contact_phone", "notes", "is_active"] as const;
+const EDITABLE = ["title", "client_number", "nedarim_mosad_id", "contact_name", "contact_phone", "notes", "is_active", "email_settings"] as const;
 
 export async function updateTenant(db: D1Database, slug: string, values: Partial<Record<(typeof EDITABLE)[number], string | number | null>>): Promise<boolean> {
   const cols = EDITABLE.filter((c) => c in values);

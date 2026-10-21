@@ -19,7 +19,7 @@ describe("admin", () => {
   it("serves the admin page and redirects the root", async () => {
     const page = await SELF.fetch(`${ORIGIN}/admin/`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("ניהול ימות פיי");
+    expect(await page.text()).toContain("ימות פיי · ניהול");
     const root = await SELF.fetch(`${ORIGIN}/`, { redirect: "manual" });
     expect(root.headers.get("location")).toBe(`${ORIGIN}/admin/`);
   });
@@ -196,5 +196,73 @@ describe("admin", () => {
       .bind(customer.data.id).first<{ id: number }>();
     expect((await api(`/zeevi-weiss/payments/${row!.id}`, "DELETE", {})).status).toBe(200);
     expect(await DB.prepare("SELECT 1 FROM zeevi_weiss_payments WHERE id = ?").bind(row!.id).first()).toBeNull();
+  });
+
+  it("manages portal users with permissions, limited to their own client", async () => {
+    // משתמש של זאבי וייס: צפייה בקורסים, עריכה במנויים, בלי הגדרות
+    const created = await api("/tenants/zeevi-weiss/users", "POST", {
+      username: "Moshe", display_name: "משה", password: "secret-pass-1",
+      permissions: { dashboard: "view", courses: "view", subscriptions: "edit", settings: "none", bogus: "edit" },
+    });
+    expect(created.status).toBe(201);
+    expect((await api("/tenants/zeevi-weiss/users", "POST", { username: "x", password: "secret-pass-1" })).status).toBe(400);
+    expect((await api("/tenants/zeevi-weiss/users", "POST", { username: "short", password: "123" })).status).toBe(400);
+
+    const adminCookie = cookie;
+    cookie = "";
+    expect((await api("/login", "POST", { username: "moshe", password: "wrong-pass" })).status).toBe(401);
+    const login = await api("/login", "POST", { username: "moshe", password: "secret-pass-1" });
+    expect(login.status).toBe(200);
+    cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+
+    const meta = await api("/meta");
+    expect(meta.data.me).toMatchObject({ role: "user", name: "משה", username: "moshe" });
+    expect(meta.data.tenants.map((t: any) => t.slug)).toEqual(["zeevi-weiss"]);
+    expect(meta.data.permissions).toMatchObject({ courses: "view", subscriptions: "edit", settings: "none", payments: "none" });
+
+    expect((await api("/zeevi-weiss/courses")).status).toBe(200);
+    expect((await api("/zeevi-weiss/courses", "POST", { name: "x", price: "1" })).status).toBe(403);
+    expect((await api("/zeevi-weiss/payments")).status).toBe(403);
+    expect((await api("/zeevi-weiss/email")).status).toBe(403);
+    expect((await api("/zeevi-weiss/info")).status).toBe(403);
+    expect((await api("/cohen/courses")).status).toBe(403);
+    expect((await api("/tenants")).status).toBe(403);
+    expect((await api("/platform")).status).toBe(403);
+
+    // חסימת המשתמש מנתקת אותו מיד
+    const userCookie = cookie;
+    cookie = adminCookie;
+    expect((await api(`/tenants/zeevi-weiss/users/${created.data.id}`, "PUT", { is_active: false })).status).toBe(200);
+    cookie = userCookie;
+    expect((await api("/meta")).status).toBe(401);
+    cookie = adminCookie;
+  });
+
+  it("saves email settings with validation and keeps the Resend key masked", async () => {
+    expect((await api("/zeevi-weiss/email", "PUT", { from_email: "not-an-email" })).status).toBe(400);
+    const saved = await api("/zeevi-weiss/email", "PUT", {
+      from_name: "זאבי", from_email: "office@example.com", recipients: "a@example.com, b@example.com", reply_to: "",
+      events: { meeting: { enabled: false, subject: "", body: "", recipients: "" }, course: { enabled: true, subject: "קורס {course}", body: "שלום {client}", recipients: "" } },
+    });
+    expect(saved.status).toBe(200);
+    const got = (await api("/zeevi-weiss/email")).data.settings;
+    expect(got).toMatchObject({ from_email: "office@example.com", recipients: "a@example.com, b@example.com" });
+    expect(got.events.meeting.enabled).toBe(false);
+    expect(got.events.meeting.subject).toBe("פגישה חדשה: {product}");
+    expect(got.events.course).toMatchObject({ enabled: true, subject: "קורס {course}" });
+
+    expect((await api("/platform", "PUT", { resend_api_key: "bad" })).status).toBe(400);
+    expect((await api("/platform", "PUT", { resend_api_key: "re_abcdefgh123456" })).status).toBe(200);
+    expect((await api("/platform")).data.resend_api_key).toBe("re_a••••3456");
+  });
+
+  it("gives every client a client number and lets the admin change it", async () => {
+    const list = (await api("/tenants")).data.rows;
+    expect(list.find((t: any) => t.slug === "zeevi-weiss").client_number).toBe(1);
+    expect(list.find((t: any) => t.slug === "cohen").client_number).toBe(2);
+    expect((await api("/tenants/cohen", "PUT", { client_number: "1" })).status).toBe(409);
+    expect((await api("/tenants/cohen", "PUT", { client_number: "500" })).status).toBe(200);
+    const res = await SELF.fetch(`${ORIGIN}/ivr/check?client=500&course=k1&ApiPhone=0521111111`);
+    expect(await res.text()).toBe("Out");
   });
 });
