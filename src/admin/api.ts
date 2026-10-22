@@ -4,7 +4,7 @@ import type { ItemSettings } from "../db/types";
 import { TEXTS, isTextKey, parseTexts } from "../ivr/texts";
 import type { Env } from "../env";
 import { addDays, normalizePhone, todayIso } from "../lib/util";
-import { getSetting, maskSecret, setSetting } from "../platform";
+import { DEFAULT_EMAIL_FOOTER, emailFooter, getSetting, maskSecret, setSetting } from "../platform";
 import { SLUG_RE, createTenant, getTenant, listTenants, rotateTenantKey, updateTenant, type TenantConfig } from "../tenants";
 import { ENTITIES, getEntity, type Entity, type EntityName, type Field } from "./entities";
 import {
@@ -151,15 +151,24 @@ async function meta(env: Env, p: Principal) {
 
 /** הגדרות מערכת (רק למנהל): מפתח Resend. המפתח לא חוזר במלואו. */
 async function platformApi(request: Request, env: Env): Promise<Response> {
-  if (request.method === "GET") return json({ resend_api_key: maskSecret(await getSetting(env.DB, "resend_api_key")) });
+  const current = async () => ({
+    resend_api_key: maskSecret(await getSetting(env.DB, "resend_api_key")),
+    email_footer: (await getSetting(env.DB, "email_footer")) ?? "",
+    default_email_footer: DEFAULT_EMAIL_FOOTER,
+  });
+  if (request.method === "GET") return json(await current());
   if (request.method !== "PUT") return error("פעולה לא נתמכת", 405);
-  const body = (await request.json().catch(() => ({}))) as { resend_api_key?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { resend_api_key?: unknown; email_footer?: unknown };
   if (typeof body.resend_api_key === "string") {
     const key = body.resend_api_key.trim();
     if (key && !/^re_[A-Za-z0-9_]{8,}$/.test(key)) return error("מפתח Resend מתחיל ב-re_");
     await setSetting(env.DB, "resend_api_key", key || null);
   }
-  return json({ ok: true, resend_api_key: maskSecret(await getSetting(env.DB, "resend_api_key")) });
+  if (typeof body.email_footer === "string") {
+    // ריק = ברירת המחדל
+    await setSetting(env.DB, "email_footer", body.email_footer.trim().slice(0, 200) || null);
+  }
+  return json({ ok: true, ...(await current()) });
 }
 
 /** קורס / מוצר שמייל הבדיקה או התצוגה המקדימה מתייחסים אליו, עם פרטי רכישה לדוגמה */
@@ -199,7 +208,7 @@ async function emailApi(request: Request, p: Principal, db: TenantDb, sub: strin
     if ("error" in settings) return error(settings.error);
     const { item, purchase } = await sampleFor(db, body);
     const override = body.item && typeof body.item === "object" ? { email_subject: body.item.email_subject, email_body: body.item.email_body } : {};
-    return json(buildEmail(db.tenant.title, settings.settings, { ...item, ...override }, purchase));
+    return json(buildEmail(db.tenant.title, settings.settings, { ...item, ...override }, purchase, { footer: await emailFooter(db.db) }));
   }
   if (!can(p, "settings", "edit")) return forbidden();
   if (!sub && method === "PUT") {

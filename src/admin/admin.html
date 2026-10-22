@@ -1268,7 +1268,16 @@
         <p>1. נכנסים ל-resend.com ← <b>API Keys</b> ← <b>Create API Key</b> (הרשאת Sending access מספיקה).<br>
         2. ב-<b>Domains</b> מוודאים שהדומיין שלכם במצב Verified.<br>3. מדביקים כאן את המפתח ושומרים.<br>
         4. אצל כל לקוח: הגדרות ← מיילים ← כתובת שולח בדומיין הזה ← "שליחת מייל בדיקה".</p>
+      </div></div>
+      <div class="card" style="margin-top:16px"><div class="card-head">${icon("edit")}<h3>שורת התחתית בכל מייל</h3></div><div class="card-body">
+        <p class="muted" style="margin-top:0">מופיעה בתחתית כל המיילים של כל הלקוחות.</p>
+        <div class="field"><label>הטקסט</label><input id="footer" value="${esc(p.email_footer)}" placeholder="${esc(p.default_email_footer)}" maxlength="200">
+          <div class="help">ריק = ברירת המחדל: ${esc(p.default_email_footer)}</div></div>
+        <button class="btn primary" id="save-footer">${icon("check")} שמירה</button>
       </div></div>`;
+      document.getElementById("save-footer").onclick = async () => {
+        try { await api("/platform", { method: "PUT", body: { email_footer: document.getElementById("footer").value } }); toast("נשמר"); renderPlatform(); } catch (err) { toast(err.message, true); }
+      };
       document.getElementById("save-platform").onclick = async () => {
         const key = document.getElementById("resend").value.trim();
         if (!key) return toast("לא הוזן מפתח חדש");

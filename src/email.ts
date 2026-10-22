@@ -1,6 +1,6 @@
 import type { TenantDb } from "./db/repo";
 import type { ItemSettings } from "./db/types";
-import { getSetting } from "./platform";
+import { DEFAULT_EMAIL_FOOTER, emailFooter, getSetting } from "./platform";
 
 /** משתנים שאפשר לשים בנושא ובתוכן: {name} */
 export const PLACEHOLDERS: { key: string; label: string }[] = [
@@ -141,7 +141,7 @@ function detailRows(v: Record<string, string>, kind: PurchaseVars["kind"]): [str
 }
 
 /** עיצוב המייל: כותרת עם שם העסק, הטקסט החופשי, טבלת פרטים, ושורת סיום. */
-export function emailHtml(o: { client: string; subject: string; body: string; details: [string, string][] | null }): string {
+export function emailHtml(o: { client: string; subject: string; body: string; details: [string, string][] | null; footer: string }): string {
   const paragraphs = escapeHtml(o.body)
     .split(/\n{2,}/)
     .filter((p) => p.trim())
@@ -169,7 +169,7 @@ ${o.details
 </td></tr>
 <tr><td style="padding:28px 32px 10px;color:#1e293b;font-size:15px;line-height:1.75;text-align:right">${paragraphs}</td></tr>
 ${details}
-<tr><td style="padding:16px 32px;background:#f8fafc;border-top:1px solid #eef2f7;color:#94a3b8;font-size:12px;text-align:right">נשלח אוטומטית ממערכת הרכישות הטלפונית של ${escapeHtml(o.client)}</td></tr>
+<tr><td style="padding:16px 32px;background:#f8fafc;border-top:1px solid #eef2f7;color:#94a3b8;font-size:12px;text-align:right">${escapeHtml(o.footer)}</td></tr>
 </table></td></tr></table></body></html>`;
 }
 
@@ -179,8 +179,18 @@ export interface BuiltEmail {
   text: string;
 }
 
-/** בונה את המייל לרכישה: התבנית של הפריט אם הוגדרה, אחרת התבנית הכללית. */
-export function buildEmail(client: string, settings: EmailSettings, item: ItemSettings, purchase: PurchaseVars, opts: { test?: boolean; now?: Date } = {}): BuiltEmail {
+/**
+ * בונה את המייל לרכישה: התבנית של הפריט אם הוגדרה, אחרת התבנית הכללית.
+ * footer = השורה בתחתית המייל (הגדרות מערכת של המנהל).
+ */
+export function buildEmail(
+  client: string,
+  settings: EmailSettings,
+  item: ItemSettings,
+  purchase: PurchaseVars,
+  opts: { test?: boolean; now?: Date; footer?: string } = {},
+): BuiltEmail {
+  const footer = opts.footer ?? DEFAULT_EMAIL_FOOTER;
   const vars: Record<string, string> = {
     client,
     ...israelDateTime(opts.now),
@@ -195,8 +205,8 @@ export function buildEmail(client: string, settings: EmailSettings, item: ItemSe
   const subject = (opts.test ? "[בדיקה] " : "") + renderTemplate(item.email_subject?.trim() || settings.subject, vars);
   const body = renderTemplate(item.email_body?.trim() || settings.body, vars);
   const details = settings.show_details ? detailRows(vars, purchase.kind) : null;
-  const text = [body, ...(details ? ["", ...details.map(([k, v]) => `${k}: ${v}`)] : []), "", `נשלח אוטומטית ממערכת הרכישות הטלפונית של ${client}`].join("\n");
-  return { subject, html: emailHtml({ client, subject, body, details }), text };
+  const text = [body, ...(details ? ["", ...details.map(([k, v]) => `${k}: ${v}`)] : []), "", footer].join("\n");
+  return { subject, html: emailHtml({ client, subject, body, details, footer }), text };
 }
 
 export const SAMPLE_PURCHASE: PurchaseVars = {
@@ -262,7 +272,7 @@ export async function notify(
   const to = opts.overrideTo ?? [...new Set([...splitEmails(settings.recipients), ...splitEmails(item.email_to)])];
   if (to.length === 0) return skip("לא הוגדרו נמענים");
 
-  const email = buildEmail(db.tenant.title, settings, item, purchase, { test: opts.test });
+  const email = buildEmail(db.tenant.title, settings, item, purchase, { test: opts.test, footer: await emailFooter(db.db) });
   const from = settings.from_name ? `${settings.from_name.replace(/[<>"]/g, "")} <${settings.from_email}>` : settings.from_email;
 
   let result: SendResult;

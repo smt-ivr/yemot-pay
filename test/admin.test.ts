@@ -254,6 +254,14 @@ describe("admin", () => {
     expect(preview.data.subject).toBe("חדש: גמרא עיון ב-250 ₪");
     expect(preview.data.html).toContain("פרטי הרכישה");
     expect(preview.data.html).toContain("0501234567, 0527654321");
+    // שורת התחתית: ברירת המחדל, ושינוי בהגדרות המערכת
+    expect(preview.data.html).toContain("מייל אוטומטי · פותח ע״י SMT");
+    expect(preview.data.html).not.toContain("נשלח אוטומטית");
+    expect((await api("/platform", "PUT", { email_footer: "נשלח ממערכת SMT" })).data.email_footer).toBe("נשלח ממערכת SMT");
+    const custom = await api("/zeevi-weiss/email/preview", "POST", {});
+    expect(custom.data.html).toContain("נשלח ממערכת SMT");
+    expect(custom.data.text).toContain("נשלח ממערכת SMT");
+    await api("/platform", "PUT", { email_footer: "" });
 
     expect((await api("/platform", "PUT", { resend_api_key: "bad" })).status).toBe(400);
     expect((await api("/platform", "PUT", { resend_api_key: "re_abcdefgh123456" })).status).toBe(200);
