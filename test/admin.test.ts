@@ -241,19 +241,44 @@ describe("admin", () => {
   it("saves email settings with validation and keeps the Resend key masked", async () => {
     expect((await api("/zeevi-weiss/email", "PUT", { from_email: "not-an-email" })).status).toBe(400);
     const saved = await api("/zeevi-weiss/email", "PUT", {
-      from_name: "זאבי", from_email: "office@example.com", recipients: "a@example.com, b@example.com", reply_to: "",
-      events: { meeting: { enabled: false, subject: "", body: "", recipients: "" }, course: { enabled: true, subject: "קורס {course}", body: "שלום {client}", recipients: "" } },
+      enabled: true, from_name: "זאבי", from_email: "office@example.com", recipients: "a@example.com, b@example.com", reply_to: "",
+      subject: "רכישה: {item}", body: "", show_details: true,
     });
     expect(saved.status).toBe(200);
     const got = (await api("/zeevi-weiss/email")).data.settings;
-    expect(got).toMatchObject({ from_email: "office@example.com", recipients: "a@example.com, b@example.com" });
-    expect(got.events.meeting.enabled).toBe(false);
-    expect(got.events.meeting.subject).toBe("פגישה חדשה: {product}");
-    expect(got.events.course).toMatchObject({ enabled: true, subject: "קורס {course}" });
+    expect(got).toMatchObject({ enabled: true, from_email: "office@example.com", recipients: "a@example.com, b@example.com", subject: "רכישה: {item}" });
+    expect(got.body).toContain("התקבלה רכישה חדשה");
+
+    // תצוגה מקדימה: נושא עם ערכי דוגמה, ועיצוב עם טבלת פרטים
+    const preview = await api("/zeevi-weiss/email/preview", "POST", { settings: { ...got, subject: "חדש: {item} ב-{price}" } });
+    expect(preview.data.subject).toBe("חדש: גמרא עיון ב-250 ₪");
+    expect(preview.data.html).toContain("פרטי הרכישה");
+    expect(preview.data.html).toContain("0501234567, 0527654321");
 
     expect((await api("/platform", "PUT", { resend_api_key: "bad" })).status).toBe(400);
     expect((await api("/platform", "PUT", { resend_api_key: "re_abcdefgh123456" })).status).toBe(200);
     expect((await api("/platform")).data.resend_api_key).toBe("re_a••••3456");
+  });
+
+  it("edits the call texts: saves only what changed, and resets to the default", async () => {
+    const list = (await api("/zeevi-weiss/texts")).data.texts;
+    const offer = list.find((x: any) => x.key === "course_offer");
+    expect(offer.default).toContain("{price}");
+    expect(offer.value).toBe("");
+    const put = await api("/zeevi-weiss/texts", "PUT", { texts: { course_offer: "להרשמה {price} הקישו 1", phone_invalid: "", bogus: "x" } });
+    expect(put.status).toBe(200);
+    const row = await DB.prepare("SELECT ivr_texts FROM tenants WHERE slug = 'zeevi-weiss'").first<{ ivr_texts: string }>();
+    expect(JSON.parse(row!.ivr_texts)).toEqual({ course_offer: "להרשמה {price} הקישו 1" });
+    await api("/zeevi-weiss/texts", "PUT", { texts: { course_offer: "" } });
+    expect((await DB.prepare("SELECT ivr_texts FROM tenants WHERE slug = 'zeevi-weiss'").first<{ ivr_texts: string | null }>())!.ivr_texts).toBeNull();
+  });
+
+  it("products have no type: a new product only takes the caller's phone and sends an email by default", async () => {
+    const res = await api("/zeevi-weiss/products", "POST", { name: "שיעור פרטי", ivr_code: "lesson", price: "120", is_active: true });
+    expect(res.status).toBe(201);
+    const row = await DB.prepare("SELECT type, ask_phone, send_email FROM zeevi_weiss_products WHERE ivr_code = 'lesson'").first();
+    expect(row).toEqual({ type: "product", ask_phone: 0, send_email: 1 });
+    expect((await api("/zeevi-weiss/products", "POST", { name: "x", price: "1", email_to: "not-an-email" })).status).toBe(400);
   });
 
   it("gives every client a client number and lets the admin change it", async () => {

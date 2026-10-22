@@ -10,7 +10,7 @@ export interface Customer {
   main_phone: string;
 }
 
-export interface Course {
+export interface Course extends ItemSettings {
   id: number;
   name: string;
   ivr_code: string | null;
@@ -24,7 +24,24 @@ export interface Course {
   on_inactive?: "keep" | "block";
 }
 
-export interface Product {
+/** הגדרות משותפות לקורס ולמוצר: טקסטים משלו ומה קורה אחרי רכישה */
+export interface ItemSettings {
+  /** 1 = המתקשר יכול לבחור טלפון אחר במקום המספר שממנו התקשר */
+  ask_phone?: number;
+  /** טקסט הצעה משלו (ריק = הטקסט הכללי) */
+  offer_text?: string | null;
+  /** טקסט אחרי רכישה מוצלחת (ריק = הטקסט הכללי) */
+  success_text?: string | null;
+  /** 1 = לשלוח מייל אחרי רכישה (אם המיילים מופעלים בהגדרות הכלליות) */
+  send_email?: number;
+  /** נמענים נוספים רק לפריט הזה */
+  email_to?: string | null;
+  /** נושא / תוכן משלו (ריק = התבנית הכללית) */
+  email_subject?: string | null;
+  email_body?: string | null;
+}
+
+export interface Product extends ItemSettings {
   id: number;
   type: ProductType;
   name: string;

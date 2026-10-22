@@ -1,5 +1,7 @@
 import { TenantDb } from "../db/repo";
-import { EMAIL_EVENTS, PLACEHOLDERS, notify, parseEmailSettings, splitEmails, validateEmailSettings } from "../email";
+import { PLACEHOLDERS, SAMPLE_PURCHASE, buildEmail, invalidEmail, notify, parseEmailSettings, splitEmails, validateEmailSettings, type PurchaseVars } from "../email";
+import type { ItemSettings } from "../db/types";
+import { TEXTS, isTextKey, parseTexts } from "../ivr/texts";
 import type { Env } from "../env";
 import { addDays, normalizePhone, todayIso } from "../lib/util";
 import { getSetting, maskSecret, setSetting } from "../platform";
@@ -69,6 +71,7 @@ export async function handleAdminApi(request: Request, env: Env, path: string, c
 
     if (action === "stats" && method === "GET" && !sub) return can(principal, "dashboard", "view") ? json(await stats(db)) : forbidden();
     if (action === "email") return await emailApi(request, principal, db, sub);
+    if (action === "texts" && !sub) return await textsApi(request, principal, db);
     if (action === "info" && method === "GET") return can(principal, "settings", "view") ? json(tenantInfo(tenant)) : forbidden();
 
     const entity = getEntity(action);
@@ -118,7 +121,7 @@ function tenantInfo(t: TenantConfig) {
 
 /** פרטי לקוח לרשימת הלקוחות של מנהל המערכת (בלי הגדרות המייל הגולמיות) */
 function tenantRow(t: TenantConfig) {
-  const { email_settings, ...rest } = t;
+  const { email_settings, ivr_texts, ...rest } = t;
   return { ...rest, email_ready: !!parseEmailSettings(email_settings).from_email };
 }
 
@@ -142,7 +145,7 @@ async function meta(env: Env, p: Principal) {
     sections: SECTIONS,
     tenants,
     entities,
-    email: { events: EMAIL_EVENTS, placeholders: PLACEHOLDERS },
+    email: { placeholders: PLACEHOLDERS },
   };
 }
 
@@ -159,12 +162,44 @@ async function platformApi(request: Request, env: Env): Promise<Response> {
   return json({ ok: true, resend_api_key: maskSecret(await getSetting(env.DB, "resend_api_key")) });
 }
 
-/** הגדרות מייל של לקוח, ושליחת מייל בדיקה */
+/** קורס / מוצר שמייל הבדיקה או התצוגה המקדימה מתייחסים אליו, עם פרטי רכישה לדוגמה */
+async function sampleFor(db: TenantDb, input: { entity?: unknown; id?: unknown }): Promise<{ item: ItemSettings; purchase: PurchaseVars }> {
+  const id = Number(input.id);
+  if ((input.entity === "courses" || input.entity === "products") && Number.isInteger(id) && id > 0) {
+    const row = await db.db.prepare(`SELECT * FROM ${db.t[input.entity]} WHERE id = ?`).bind(id).first<ItemSettings & { name: string; price: number; access_days?: number | null }>();
+    if (row) {
+      const isCourse = input.entity === "courses";
+      return {
+        item: row,
+        purchase: {
+          ...SAMPLE_PURCHASE,
+          kind: isCourse ? "course" : "product",
+          item: row.name,
+          price: row.price > 0 ? `${row.price} ₪` : "ללא תשלום",
+          phones: isCourse ? SAMPLE_PURCHASE.phones : "0527654321",
+          validity: isCourse ? (row.access_days ? `${row.access_days} ימים` : "לצמיתות") : undefined,
+        },
+      };
+    }
+  }
+  return { item: {}, purchase: SAMPLE_PURCHASE };
+}
+
+/** הגדרות מייל של לקוח, תצוגה מקדימה ושליחת מייל בדיקה */
 async function emailApi(request: Request, p: Principal, db: TenantDb, sub: string | undefined): Promise<Response> {
   const method = request.method;
   if (!sub && method === "GET") {
     if (!can(p, "settings", "view")) return forbidden();
     return json({ settings: parseEmailSettings(db.tenant.email_settings), resend_ready: !!(await getSetting(db.db, "resend_api_key")) });
+  }
+  if (sub === "preview" && method === "POST") {
+    if (!can(p, "settings", "view") && !can(p, "courses", "view") && !can(p, "products", "view")) return forbidden();
+    const body = (await request.json().catch(() => ({}))) as { settings?: unknown; entity?: unknown; id?: unknown; item?: ItemSettings };
+    const settings = body.settings ? validateEmailSettings(body.settings) : { settings: parseEmailSettings(db.tenant.email_settings) };
+    if ("error" in settings) return error(settings.error);
+    const { item, purchase } = await sampleFor(db, body);
+    const override = body.item && typeof body.item === "object" ? { email_subject: body.item.email_subject, email_body: body.item.email_body } : {};
+    return json(buildEmail(db.tenant.title, settings.settings, { ...item, ...override }, purchase));
   }
   if (!can(p, "settings", "edit")) return forbidden();
   if (!sub && method === "PUT") {
@@ -174,23 +209,36 @@ async function emailApi(request: Request, p: Principal, db: TenantDb, sub: strin
     return json({ ok: true, settings: v.settings });
   }
   if (sub === "test" && method === "POST") {
-    const body = (await request.json().catch(() => ({}))) as { event?: string; to?: string };
-    const event = EMAIL_EVENTS.find((e) => e.key === body.event)?.key ?? "meeting";
+    const body = (await request.json().catch(() => ({}))) as { to?: string; entity?: unknown; id?: unknown };
     const to = splitEmails(body.to ?? "");
-    const sample = {
-      product: "פגישת ייעוץ (דוגמה)",
-      course: "קורס לדוגמה",
-      price: "250 ₪",
-      buyer_phone: "0501234567",
-      contact_phone: "0527654321",
-      phones: "0501234567, 0527654321",
-      validity: "365 ימים",
-      reference: "1234",
-    };
-    const result = await notify(db, event, sample, { test: true, overrideTo: to.length ? to : undefined });
+    const bad = invalidEmail(body.to);
+    if (bad) return error(`כתובת לא תקינה: ${bad}`);
+    const { item, purchase } = await sampleFor(db, body);
+    const result = await notify(db, item, purchase, { test: true, overrideTo: to.length ? to : undefined });
     return result.ok ? json({ ok: true, id: result.id }) : error(`המייל לא נשלח: ${result.error}`, 502);
   }
   return error("פעולה לא נתמכת", 405);
+}
+
+/** הטקסטים שהמתקשר שומע. נשמר רק מה ששונה מברירת המחדל. */
+async function textsApi(request: Request, p: Principal, db: TenantDb): Promise<Response> {
+  const list = () => {
+    const saved = parseTexts(db.tenant.ivr_texts);
+    return Object.entries(TEXTS).map(([key, def]) => ({ key, ...def, value: saved[key as keyof typeof saved] ?? "" }));
+  };
+  if (request.method === "GET") return can(p, "settings", "view") ? json({ texts: list() }) : forbidden();
+  if (request.method !== "PUT") return error("פעולה לא נתמכת", 405);
+  if (!can(p, "settings", "edit")) return forbidden();
+  const body = (await request.json().catch(() => ({}))) as { texts?: Record<string, unknown> };
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(body.texts ?? {})) {
+    if (!isTextKey(key) || typeof value !== "string") continue;
+    const v = value.trim().slice(0, 500);
+    if (v && v !== TEXTS[key].default) out[key] = v;
+  }
+  await updateTenant(db.db, db.tenant.slug, { ivr_texts: Object.keys(out).length ? JSON.stringify(out) : null });
+  db.tenant.ivr_texts = Object.keys(out).length ? JSON.stringify(out) : null;
+  return json({ ok: true, texts: list() });
 }
 
 /** ניהול הלקוחות של הפלטפורמה (רק למנהל): יצירה, עריכה, מפתח, ומשתמשי האזור האישי שלהם. */
@@ -425,6 +473,12 @@ function validate(fields: Field[], body: unknown, partial: boolean): { values: V
         v = normalizePhone(str);
         if (!v) return { error: `טלפון לא תקין: ${f.label}` };
         break;
+      case "emails": {
+        const bad = invalidEmail(str);
+        if (bad) return { error: `כתובת מייל לא תקינה: ${bad}` };
+        v = splitEmails(str).join(", ").slice(0, 1000);
+        break;
+      }
       case "int":
       case "ref":
         v = Number(str);

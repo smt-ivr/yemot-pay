@@ -39,6 +39,7 @@
   .btn.sm { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
   .btn.icon { padding: 6px; }
   .btn:disabled { opacity: .5; cursor: default; }
+  [hidden] { display: none !important; }
   input, select, textarea { width: 100%; border: 1px solid var(--border-2); border-radius: 10px; padding: 9px 12px; background: #fff; outline: none; transition: .15s; }
   input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-100); }
   input:disabled, textarea:disabled, select:disabled { background: #f6f7fa; color: var(--text-2); }
@@ -193,21 +194,78 @@
   .login-box form { width: min(380px, 100%); }
   .login-box h1 { font-size: 26px; margin: 0 0 4px; }
 
-  @media (max-width: 1100px) { .kpis { grid-template-columns: repeat(2, 1fr); } .dash { grid-template-columns: 1fr; } }
+  .form-section { display: flex; align-items: center; gap: 10px; margin: 22px 0 12px; font-size: 13px; font-weight: 700; color: var(--brand); }
+  .form-section::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .form-section:first-child { margin-top: 0; }
+  .text-row { display: grid; grid-template-columns: 240px 1fr; gap: 6px 18px; padding: 14px 0; border-bottom: 1px dashed var(--border); align-items: start; }
+  .text-row:last-child { border-bottom: 0; }
+  .text-row .lbl b { display: block; }
+  .text-row .lbl .muted { font-size: 12px; }
+  .text-row textarea { min-height: 46px; }
+  .text-row .vars { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .text-row.changed textarea { border-color: #a5b4fc; background: #fbfbff; }
+  .text-row .reset { margin-top: 6px; }
+  .preview-frame { width: 100%; height: 560px; border: 1px solid var(--border); border-radius: 12px; background: #f1f5f9; }
+  .email-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+  .switch-row { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: #fafbff; margin-bottom: 16px; }
+  .switch-row b { display: block; }
+  .switch-row .muted { font-size: 12.5px; }
+  .backdrop { display: none; }
+
+  @media (max-width: 1100px) { .kpis { grid-template-columns: repeat(2, 1fr); } .dash { grid-template-columns: 1fr; } .email-grid { grid-template-columns: 1fr; } }
   @media (max-width: 820px) {
-    .side { position: fixed; inset: 0 0 0 auto; z-index: 50; transform: translateX(100%); transition: .2s; }
+    body { font-size: 15px; }
+    .side { position: fixed; inset: 0 0 0 auto; z-index: 50; transform: translateX(100%); transition: transform .2s; width: min(290px, 86vw); }
     .side.open { transform: none; box-shadow: var(--shadow-lg); }
+    .backdrop.show { display: block; position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 40; }
     .menu-btn { display: inline-flex; }
-    .topbar { padding: 16px 16px 4px; } .content { padding: 12px 16px 32px; }
+    .topbar { position: sticky; top: 0; z-index: 30; background: rgba(244,246,251,.94); backdrop-filter: blur(6px); padding: 10px 16px; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+    .topbar > div:nth-child(2) { flex: 1; min-width: 0; }
+    .topbar .spacer { display: none; }
+    .topbar h1 { font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .topbar p { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .content { padding: 12px 12px 32px; }
     .login-wrap { grid-template-columns: 1fr; } .login-art { display: none; }
     .grid2 { grid-template-columns: 1fr; }
-    .kpis { grid-template-columns: 1fr; }
+    .kpis { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .kpi { padding: 14px; flex-direction: column; align-items: flex-start; gap: 8px; }
+    .kpi .ic { width: 38px; height: 38px; } .kpi .num { font-size: 20px; }
+    .card-body { padding: 16px; }
+    .card-head { padding: 14px 16px; flex-wrap: wrap; }
+    .toolbar { padding: 12px; }
+    .toolbar .search { max-width: none; min-width: 100%; }
+    .toolbar select { flex: 1; min-width: 0; }
+    /* טבלאות הופכות לכרטיסים */
+    .table-wrap.cards table, .table-wrap.cards tbody, .table-wrap.cards tr, .table-wrap.cards td { display: block; width: 100%; }
+    .table-wrap.cards thead { display: none; }
+    .table-wrap.cards tr { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .table-wrap.cards tbody tr:last-child { border-bottom: 0; }
+    .table-wrap.cards td { border: 0; padding: 3px 0; white-space: normal; display: flex; gap: 10px; align-items: center; min-height: 26px; }
+    .table-wrap.cards td::before { content: attr(data-label); flex: 0 0 38%; color: var(--muted); font-size: 12.5px; }
+    .table-wrap.cards td[data-label=""]::before, .table-wrap.cards td.actions::before { display: none; }
+    .table-wrap.cards td.actions { width: 100%; justify-content: flex-start; padding-top: 8px; flex-wrap: wrap; }
+    .table-wrap.cards td.wrap { max-width: none; }
+    .table-wrap.cards td:empty { display: none; }
+    dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; margin: 0; }
+    dialog[open] { display: flex; flex-direction: column; }
+    #dlg-form { display: flex; flex-direction: column; height: 100%; }
+    .dlg-body { flex: 1; max-height: none; padding: 16px; }
+    .dlg-foot { border-radius: 0; flex-wrap: wrap; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+    .dlg-head { padding: 14px 16px; }
+    .text-row { grid-template-columns: 1fr; }
+    .detail-grid > div[style*="span 2"] { grid-column: auto !important; }
+    .preview-frame { height: 460px; }
+    .code { font-size: 12px; padding-top: 44px; padding-right: 14px; }
+    .tenant-cards { grid-template-columns: 1fr; }
+    #toast { left: 12px; right: 12px; bottom: 16px; max-width: none; }
+    input, select, textarea { font-size: 16px; }
   }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <dialog id="dlg"><form method="dialog" id="dlg-form"></form></dialog>
+<dialog id="dlg2"><div id="dlg2-body" style="display:flex;flex-direction:column;height:100%"></div></dialog>
 <div id="toast"></div>
 <script>
 (() => {
@@ -326,11 +384,11 @@
       { group: "מכירות", key: "courses", label: "קורסים", icon: "book", show: canView("courses") },
       { group: "מכירות", key: "subscriptions", label: "מנויים", icon: "key", show: canView("subscriptions") },
       { group: "מכירות", key: "customers", label: "רוכשים", icon: "users", show: canView("customers") },
-      { group: "מכירות", key: "products", label: "מוצרים ופגישות", icon: "box", show: canView("products") },
+      { group: "מכירות", key: "products", label: "מוצרים", icon: "box", show: canView("products") },
       { group: "מכירות", key: "orders", label: "הזמנות", icon: "cart", show: canView("orders") },
       { group: "מכירות", key: "payments", label: "תשלומים", icon: "card", show: canView("payments") },
       { group: "מערכת", key: "ivr_log", label: "יומן שיחות", icon: "phone", show: canView("ivr_log") },
-      { group: "מערכת", key: "settings", label: "הגדרות (ימות ומיילים)", icon: "settings", show: canView("settings") },
+      { group: "מערכת", key: "settings", label: "הגדרות (ימות, טקסטים, מיילים)", icon: "settings", show: canView("settings") },
       { group: "מערכת", key: "guide", label: "מדריך הקמה", icon: "help", show: canView("settings") },
       { group: "ניהול הפלטפורמה", key: "tenants", label: "לקוחות והרשאות", icon: "building", show: isAdmin() },
       { group: "ניהול הפלטפורמה", key: "platform", label: "הגדרות מערכת", icon: "server", show: isAdmin() },
@@ -357,6 +415,7 @@
           <div class="who"><b>${esc(META.me.name)}</b><span>${isAdmin() ? "מנהל מערכת" : esc(META.me.username)}</span></div>
           <button class="btn ghost icon" id="logout" title="יציאה">${icon("logout")}</button></div>
       </aside>
+      <div class="backdrop" id="backdrop"></div>
       <div class="main">
         <div class="topbar"><button class="btn icon menu-btn" id="menu">${icon("menu")}</button>
           <div><h1 id="title"></h1><p id="subtitle"></p></div><div class="spacer"></div><div id="top-actions"></div></div>
@@ -365,8 +424,11 @@
     const sel = document.getElementById("tenant");
     if (sel) sel.onchange = () => { tenant = sel.value; ls.set("yp_tenant", tenant); go(view); };
     document.getElementById("logout").onclick = async () => { await api("/logout", { method: "POST", body: {} }).catch(() => {}); showLogin(); };
-    document.getElementById("menu").onclick = () => document.getElementById("side").classList.toggle("open");
-    app.querySelectorAll(".nav a").forEach((a) => a.onclick = (e) => { e.preventDefault(); document.getElementById("side").classList.remove("open"); go(a.dataset.view); });
+    const side = document.getElementById("side"), backdrop = document.getElementById("backdrop");
+    const menu = (open) => { side.classList.toggle("open", open); backdrop.classList.toggle("show", open); };
+    document.getElementById("menu").onclick = () => menu(!side.classList.contains("open"));
+    backdrop.onclick = () => menu(false);
+    app.querySelectorAll(".nav a").forEach((a) => a.onclick = (e) => { e.preventDefault(); menu(false); go(a.dataset.view); });
     go(view);
   }
 
@@ -395,6 +457,8 @@
       return v ? `<span class="pill ${esc(v)}">${esc(label)}</span>` : "";
     }
     if (col === "is_active") return v ? `<span class="pill on">פעיל</span>` : `<span class="pill off">לא פעיל</span>`;
+    if (col === "send_email") return v ? `<span class="pill on">נשלח</span>` : `<span class="pill">לא</span>`;
+    if (col === "ask_phone") return v ? `<span class="pill on">מותר</span>` : `<span class="pill">רק המתקשר</span>`;
     if (["price", "amount"].includes(col)) return `<b>${money(v)}</b>`;
     if (col === "access_days") return v ? `${esc(v)} ימים` : `<span class="muted">לצמיתות</span>`;
     if (col === "end_date" && entity === "subscriptions") {
@@ -421,13 +485,13 @@
       if (entity === "customers") btns.push(`<button type="button" class="btn sm" data-act="open">כרטיס</button>`);
       if (editable) btns.push(`<button type="button" class="btn sm icon" data-act="edit" title="עריכה">${icon("edit")}</button>`);
       if (editable && e.deletable) btns.push(`<button type="button" class="btn sm icon danger" data-act="del" title="מחיקה">${icon("trash")}</button>`);
-      return `<td class="actions">${btns.join("")}</td>`;
+      return `<td class="actions" data-label="">${btns.join("")}</td>`;
     };
     const clickable = opts.actions !== false && (editable || entity === "customers");
-    return `<div class="table-wrap"><table>
+    return `<div class="table-wrap cards"><table>
       <thead><tr>${columns.map((c) => `<th>${esc(c.label)}</th>`).join("")}${opts.actions === false ? "" : "<th></th>"}</tr></thead>
       <tbody>${rows.map((r) => `<tr data-id="${r.id}" data-entity="${entity}" class="${clickable ? "click" : ""}">${columns.map((c) =>
-        `<td class="${c.name === "details" ? "wrap" : ""}">${cell(entity, c.name, r)}</td>`).join("")}${actions()}</tr>`).join("")}</tbody>
+        `<td class="${c.name === "details" ? "wrap" : ""}" data-label="${c.name === "id" ? "" : esc(c.label)}">${cell(entity, c.name, r)}</td>`).join("")}${actions()}</tr>`).join("")}</tbody>
     </table></div>`;
   }
 
@@ -513,8 +577,8 @@
     courses: "הקורסים שנמכרים בטלפון – מחיר, תוקף ומספר טלפונים לכל רכישה",
     subscriptions: "מי קיבל גישה לאיזה קורס, ובאילו טלפונים",
     customers: "כל מי שרכש בטלפון",
-    products: "מוצרים, פגישות ופגישות טלפוניות",
-    orders: "רכישות של מוצרים ופגישות",
+    products: "כל מה שנמכר בטלפון חוץ מקורסים – פגישה, שיעור, ספר. ההבדל רק בטקסטים",
+    orders: "רכישות של מוצרים",
     payments: "כל התשלומים שהתקבלו דרך נדרים פלוס",
     ivr_log: "כל מה שקרה בשיחות – כולל תקלות ומיילים שנשלחו",
   };
@@ -577,12 +641,22 @@
   }
 
   function inputFor(f, value, opts) {
+    if (f.hidden) return "";
+    const head = f.section ? `<div class="form-section">${esc(f.section)}</div>` : "";
+    return head + fieldControl(f, value, opts);
+  }
+  function fieldControl(f, value, opts) {
     const v = value ?? f.default ?? "";
     const id = `f_${f.name}`;
+    const ph = f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : "";
     let control;
     switch (f.type) {
-      case "longtext": control = `<textarea id="${id}" name="${f.name}">${esc(v)}</textarea>`; break;
-      case "bool": return `<div class="field"><label class="check"><input type="checkbox" id="${id}" name="${f.name}" ${v === "" || v ? "checked" : ""}> ${esc(f.label)}</label></div>`;
+      case "longtext": control = `<textarea id="${id}" name="${f.name}" rows="3"${ph}>${esc(v)}</textarea>`; break;
+      case "bool": {
+        const on = v === "" ? true : v === true || v === 1 || v === "1";
+        return `<div class="field"><label class="check"><input type="checkbox" id="${id}" name="${f.name}" ${on ? "checked" : ""}> ${esc(f.label)}</label>${f.help ? `<div class="help">${esc(f.help)}</div>` : ""}</div>`;
+      }
+      case "emails": control = `<input type="text" dir="ltr" id="${id}" name="${f.name}" value="${esc(v)}" placeholder="name@domain.co.il, other@domain.co.il">`; break;
       case "enum": control = `<select id="${id}" name="${f.name}">${f.required || f.default ? "" : `<option value=""></option>`}${f.options.map((o) =>
         `<option value="${esc(o.value)}" ${String(v) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`; break;
       case "ref": {
@@ -596,7 +670,7 @@
       case "datetime": control = `<input type="datetime-local" id="${id}" name="${f.name}" value="${esc(String(v).replace(" ", "T").slice(0, 16))}">`; break;
       case "int": case "real": control = `<input type="number" step="${f.type === "real" ? "0.01" : "1"}" min="0" id="${id}" name="${f.name}" value="${esc(v)}">`; break;
       case "phone": control = `<input type="tel" dir="ltr" id="${id}" name="${f.name}" value="${esc(v)}" placeholder="05XXXXXXXX">`; break;
-      default: control = `<input type="text" id="${id}" name="${f.name}" value="${esc(v)}">`;
+      default: control = `<input type="text" id="${id}" name="${f.name}" value="${esc(v)}"${ph}>`;
     }
     return `<div class="field"><label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>${control}${f.help ? `<div class="help">${esc(f.help)}</div>` : ""}</div>`;
   }
@@ -604,6 +678,7 @@
   function readForm(fields) {
     const out = {};
     for (const f of fields) {
+      if (f.hidden) continue;
       const el = dlgForm.querySelector(`[name="${f.name}"]`);
       if (el) out[f.name] = f.type === "bool" ? el.checked : el.value;
     }
@@ -618,7 +693,7 @@
     if (!dlg.open) dlg.showModal();
   }
 
-  const SINGULAR = { courses: "קורס", subscriptions: "מנוי", customers: "רוכש", products: "מוצר / פגישה", orders: "הזמנה", payments: "תשלום" };
+  const SINGULAR = { courses: "קורס", subscriptions: "מנוי", customers: "רוכש", products: "מוצר", orders: "הזמנה", payments: "תשלום" };
 
   async function openForm(entity, id, preset = {}, onDone) {
     const e = META.entities[entity];
@@ -636,6 +711,7 @@
         `${fields.map((f) => inputFor(f, row[f.name], opts)).join("")}${phonesField}<div class="err" id="form-err"></div>`,
         `${editable ? `<button class="btn primary" id="save">${icon("check")} שמירה</button>` : ""}<button type="button" class="btn" data-close>סגירה</button>
          ${entity === "courses" && id && canView("settings") ? `<button type="button" class="btn" id="ext">${icon("ext")} הגדרת שלוחה</button>` : ""}
+         ${["courses", "products"].includes(entity) ? `<button type="button" class="btn" id="mail-preview">${icon("mail")} איך ייראה המייל</button>` : ""}
          <div class="spacer"></div>${id && editable && e.deletable ? `<button type="button" class="btn danger" id="del">${icon("trash")} מחיקה</button>` : ""}`);
       if (!editable) dlgForm.querySelectorAll("input, select, textarea").forEach((el) => el.disabled = true);
 
@@ -695,6 +771,11 @@
       if (del) del.onclick = async () => { dlg.close(); await deleteRow(entity, id, onDone || refresh); };
       const ext = dlgForm.querySelector("#ext");
       if (ext) ext.onclick = () => showExtension(row);
+      const mp = dlgForm.querySelector("#mail-preview");
+      if (mp) mp.onclick = () => {
+        const val = (n) => dlgForm.querySelector(`[name="${n}"]`)?.value || "";
+        emailPreviewWindow({ entity, id, item: { email_subject: val("email_subject"), email_body: val("email_body") } });
+      };
     } catch (err) { toast(err.message, true); }
   }
 
@@ -753,7 +834,6 @@
     product: (t, code) => ["type=api", `api_link=${ORIGIN}/ivr/product`,
       `api_add_0=client=${t.client_number}`, `api_add_1=product=${code}`, `api_add_2=key=${t.api_key}`].join("\n"),
   };
-  const TYPE_NAME = { product: "מוצר", meeting: "פגישה", phone_meeting: "פגישה טלפונית" };
 
   /** תיעוד מלא של קורס אחד: שתי השלוחות, שורה אחר שורה */
   function courseDoc(t, c) {
@@ -793,13 +873,14 @@
     tab = tab || ls.get("yp_settings_tab") || "ivr";
     setTitle("הגדרות", currentTenant()?.title || "");
     const main = document.getElementById("main");
+    const tabs = { ivr: ["phone", "הגדרות לימות המשיח"], texts: ["edit", "טקסטים בשיחה"], email: ["mail", "מיילים"] };
+    if (!tabs[tab]) tab = "ivr";
     main.innerHTML = `<div class="card"><div class="tabs">
-        <button data-tab="ivr" class="${tab === "ivr" ? "active" : ""}">${icon("phone")} הגדרות לימות המשיח</button>
-        <button data-tab="email" class="${tab === "email" ? "active" : ""}">${icon("mail")} מיילים</button></div>
+        ${Object.entries(tabs).map(([k, [ic, label]]) => `<button data-tab="${k}" class="${tab === k ? "active" : ""}">${icon(ic)} ${label}</button>`).join("")}</div>
       <div class="card-body" id="tab-body"><div class="empty">טוען…</div></div></div>`;
     main.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { ls.set("yp_settings_tab", b.dataset.tab); renderSettings(b.dataset.tab); });
     const body = document.getElementById("tab-body");
-    try { tab === "email" ? await renderEmailTab(body) : await renderIvrTab(body); }
+    try { await ({ ivr: renderIvrTab, texts: renderTextsTab, email: renderEmailTab })[tab](body); }
     catch (err) { body.innerHTML = `<div class="err">${esc(err.message)}</div>`; }
   }
 
@@ -816,7 +897,7 @@
         return [`=== קורס: ${c.name} (מזהה קורס ${code}) ===`, "", "[שלוחת הקורס - להוסיף ל-ext.ini הקיים]", yemotFiles.courseCheck(t, code), "",
           "[תת-שלוחה 1 בתוך שלוחת הקורס - ext.ini]", yemotFiles.coursePurchase(t, code), "", ""];
       }),
-      ...products.flatMap((p) => [`=== ${TYPE_NAME[p.type] || "מוצר"}: ${p.name} (מזהה מוצר ${p.ivr_code || p.id}) ===`, "", "[שלוחת הרכישה - ext.ini]",
+      ...products.flatMap((p) => [`=== מוצר: ${p.name} (מזהה מוצר ${p.ivr_code || p.id}) ===`, "", "[שלוחת הרכישה - ext.ini]",
         yemotFiles.product(t, p.ivr_code || p.id), "", ""]),
     ].join("\n");
     body.innerHTML = `
@@ -827,16 +908,16 @@
       </div>
       ${t.nedarim_mosad_id ? "" : `<div class="notice">${icon("help")}<div>עדיין לא הוגדר מספר מוסד בנדרים פלוס – בלי זה הסליקה לא תעבוד.</div></div>`}
       <div class="notice info">${icon("help")}<div>
-        לכל קורס יש <b>שתי שלוחות</b>: שלוחת הקורס (התוכן), ובתוכה תת-שלוחה <b>1</b> לרכישה. לכל מוצר או פגישה יש <b>שלוחה אחת</b>.
+        לכל קורס יש <b>שתי שלוחות</b>: שלוחת הקורס (התוכן), ובתוכה תת-שלוחה <b>1</b> לרכישה. לכל מוצר יש <b>שלוחה אחת</b>.
         מעתיקים כל בלוק לקובץ ext.ini של השלוחה המתאימה, בדיוק כמו שהוא – כולל שורות ה-api_add עם מספר הלקוח, המזהה והמפתח.</div></div>
       ${courses.length + products.length ? `<button type="button" class="btn" data-copy="${esc(allText)}">${icon("copy")} העתקת הכל (קובץ טקסט אחד)</button>` : ""}
       ${courses.map((c) => `<div class="card" style="margin-top:16px"><div class="card-head">${icon("book")}<h3>${esc(c.name)}</h3>
           <span class="pill">מזהה קורס ${esc(c.ivr_code || c.id)}</span>${c.is_active ? "" : `<span class="pill off">לא פעיל</span>`}</div>
         <div class="card-body">${courseDoc(t, c)}</div></div>`).join("") || `<div class="muted" style="margin-top:16px">עדיין אין קורסים.</div>`}
       ${products.map((p) => `<div class="card" style="margin-top:16px"><div class="card-head">${icon("box")}<h3>${esc(p.name)}</h3>
-          <span class="pill">${esc(TYPE_NAME[p.type] || "מוצר")} · מזהה מוצר ${esc(p.ivr_code || p.id)}</span></div>
+          <span class="pill">מזהה מוצר ${esc(p.ivr_code || p.id)}</span>${p.is_active ? "" : `<span class="pill off">לא פעיל</span>`}</div>
         <div class="card-body"><p class="muted" style="margin:0 0 8px">שלוחה חדשה (בכל מקום בתפריט), ובקובץ ext.ini שלה:</p>${codeBlock(yemotFiles.product(t, p.ivr_code || p.id))}
-          ${p.type === "phone_meeting" ? `<p class="muted" style="margin:0">המתקשר מתבקש גם טלפון לתיאום. אחרי התשלום נשלח מייל לפי הגדרות המיילים.</p>` : ""}</div></div>`).join("")}
+          <p class="muted" style="margin:0">${p.ask_phone ? "המתקשר יכול לבחור טלפון אחר ליצירת קשר." : "נרשם המספר שממנו התקשרו."} ${p.send_email ? "אחרי הרכישה נשלח מייל." : "בלי מייל."}</p></div></div>`).join("")}
       <div class="section-title">שורות אופציונליות</div>
       <p class="muted" style="margin-top:-4px">מוסיפים עוד שורת api_add עם המספר הבא ברצף (למשל אחרי api_add_2 באה api_add_3).</p>
       <div class="card table-wrap"><table><thead><tr><th>שורה</th><th>איפה</th><th>מה עושה</th><th>ברירת מחדל</th></tr></thead><tbody>
@@ -851,6 +932,35 @@
     bindCopy(body);
   }
 
+  /** חלון תצוגה מקדימה של המייל (עם אפשרות למייל בדיקה) */
+  async function emailPreviewWindow(req) {
+    const d2 = document.getElementById("dlg2"), box = document.getElementById("dlg2-body");
+    try {
+      const mail = await api(`/${tenant}/email/preview`, { method: "POST", body: req });
+      const canTest = canEdit("settings") && (!req.entity || req.id);
+      box.innerHTML = `<div class="dlg-head">${icon("mail")}&nbsp; תצוגה מקדימה של המייל<div class="spacer"></div><button type="button" class="btn ghost icon" data-x>✕</button></div>
+        <div class="dlg-body"><div class="muted" style="font-size:12.5px">נושא</div><div style="font-weight:700;margin-bottom:12px">${esc(mail.subject)}</div>
+          <iframe class="preview-frame" sandbox="" title="תצוגה מקדימה"></iframe>
+          <p class="muted" style="font-size:12.5px;margin:8px 0 0">עם פרטי רכישה לדוגמה. ${req.entity ? "מייל הבדיקה נשלח לפי ההגדרות השמורות – שמרו קודם אם שיניתם." : ""}</p></div>
+        <div class="dlg-foot">${canTest ? `<button type="button" class="btn primary" id="send-test">${icon("send")} שליחת מייל בדיקה</button>` : ""}<button type="button" class="btn" data-x>סגירה</button></div>`;
+      box.querySelector("iframe").srcdoc = mail.html;
+      box.querySelectorAll("[data-x]").forEach((b) => b.onclick = () => d2.close());
+      const st = box.querySelector("#send-test");
+      if (st) st.onclick = () => sendTestEmail(req.entity ? { entity: req.entity, id: req.id } : {}, req.beforeSend);
+      if (!d2.open) d2.showModal();
+    } catch (err) { toast(err.message, true); }
+  }
+  async function sendTestEmail(target, beforeSend) {
+    const to = prompt("לאיזו כתובת לשלוח את מייל הבדיקה?", ls.get("yp_test_to") || "");
+    if (!to) return;
+    ls.set("yp_test_to", to);
+    try {
+      if (beforeSend) await beforeSend();
+      await api(`/${tenant}/email/test`, { method: "POST", body: { ...target, to } });
+      toast("מייל בדיקה נשלח – בדקו את תיבת הדואר");
+    } catch (err) { toast(err.message, true); }
+  }
+
   async function renderEmailTab(body) {
     const { settings, resend_ready } = await api(`/${tenant}/email`);
     const editable = canEdit("settings");
@@ -858,66 +968,66 @@
     const chips = META.email.placeholders.map((p) => `<span class="chip" data-ph="{${p.key}}" title="${esc(p.label)}">{${esc(p.key)}} · ${esc(p.label)}</span>`).join("");
     body.innerHTML = `
       ${resend_ready ? "" : `<div class="notice">${icon("help")}<div>עוד לא הוגדר מפתח Resend ${isAdmin() ? `– <a href="#platform" id="to-platform">להגדרות מערכת</a>` : "– פנו למנהל המערכת"}. בלי זה מיילים לא יישלחו.</div></div>`}
-      <div class="grid2" id="email-main">
-        <div class="field"><label>שם השולח</label><input name="from_name" value="${esc(settings.from_name)}" placeholder="למשל: זאבי וייס" ${dis}></div>
-        <div class="field"><label>כתובת השולח *</label><input name="from_email" dir="ltr" value="${esc(settings.from_email)}" placeholder="office@your-domain.co.il" ${dis}>
-          <div class="help">חייבת להיות בדומיין שמאומת ב-Resend</div></div>
-        <div class="field"><label>נמענים לכל ההתראות</label><input name="recipients" dir="ltr" value="${esc(settings.recipients)}" placeholder="owner@domain.co.il, office@domain.co.il" ${dis}>
-          <div class="help">מי מקבל את המיילים. אפשר כמה כתובות מופרדות בפסיק</div></div>
-        <div class="field"><label>כתובת למענה (Reply-To)</label><input name="reply_to" dir="ltr" value="${esc(settings.reply_to)}" ${dis}></div>
-      </div>
-      <div class="section-title">מתי לשלוח ומה לכתוב</div>
-      <p class="muted" style="margin-top:-4px">לחצו בתוך שדה הנושא או התוכן, ואז על משתנה כדי להוסיף אותו. המשתנה יוחלף בערך האמיתי בכל מייל.</p>
-      <div class="chips">${chips}</div>
-      ${META.email.events.map(({ key, label }) => {
-        const ev = settings.events[key];
-        return `<div class="event ${ev.enabled ? "open" : ""}" data-event="${key}">
-          <div class="event-head"><label class="check" data-stop><input type="checkbox" name="enabled" ${ev.enabled ? "checked" : ""} ${dis}></label>
-            <b>${esc(label)}</b><span class="pill ${ev.enabled ? "on" : "off"}">${ev.enabled ? "נשלח" : "כבוי"}</span></div>
-          <div class="event-body">
-            <div class="field"><label>נושא המייל (מה שיראו בתיבת הדואר)</label><input name="subject" value="${esc(ev.subject)}" ${dis}>
-              <div class="help">תצוגה מקדימה: <b data-preview="subject"></b></div></div>
-            <div class="field"><label>תוכן</label><textarea name="body" rows="9" ${dis}>${esc(ev.body)}</textarea></div>
-            <div class="field"><label>נמענים נוספים רק לאירוע הזה</label><input name="recipients" dir="ltr" value="${esc(ev.recipients)}" ${dis}></div>
-            ${editable ? `<button type="button" class="btn sm" data-test="${key}">${icon("send")} שליחת מייל בדיקה</button>` : ""}
-          </div></div>`;
-      }).join("")}
-      ${editable ? `<div style="display:flex;gap:10px;align-items:center;margin-top:16px"><button class="btn primary" id="save-email">${icon("check")} שמירת הגדרות המייל</button><span class="err" id="email-err"></span></div>` : ""}`;
+      <div class="notice info">${icon("help")}<div>כאן ההגדרות <b>הכלליות</b>: מאיזו כתובת נשלח, למי, ואיך נראה המייל.
+        בכל <a href="#courses" data-go="courses">קורס</a> ו<a href="#products" data-go="products">מוצר</a>, בקבוצה "אחרי הרכישה", בוחרים אם לשלוח עליו מייל, ואפשר לתת לו נושא, תוכן ונמענים משלו.</div></div>
+      <label class="switch-row"><input type="checkbox" name="enabled" ${settings.enabled ? "checked" : ""} ${dis} style="width:20px;height:20px;accent-color:var(--brand)">
+        <div><b>שליחת מיילים פעילה</b><span class="muted">כבוי = לא נשלח שום מייל, גם אם בקורס או במוצר מסומן לשלוח</span></div></label>
+      <div class="email-grid">
+        <div>
+          <div class="form-section">שולח ונמענים</div>
+          <div class="grid2">
+            <div class="field"><label>שם השולח</label><input name="from_name" value="${esc(settings.from_name)}" placeholder="${esc(currentTenant()?.title || "")}" ${dis}></div>
+            <div class="field"><label>כתובת השולח *</label><input name="from_email" dir="ltr" value="${esc(settings.from_email)}" placeholder="office@your-domain.co.il" ${dis}>
+              <div class="help">בדומיין שמאומת ב-Resend</div></div>
+          </div>
+          <div class="field"><label>נמענים</label><input name="recipients" dir="ltr" value="${esc(settings.recipients)}" placeholder="owner@domain.co.il, office@domain.co.il" ${dis}>
+            <div class="help">מי מקבל את המיילים על כל רכישה. כמה כתובות – מופרדות בפסיק</div></div>
+          <div class="field"><label>כתובת למענה (Reply-To)</label><input name="reply_to" dir="ltr" value="${esc(settings.reply_to)}" placeholder="לא חובה" ${dis}></div>
+          <div class="form-section">התבנית הכללית</div>
+          <p class="muted" style="margin:-4px 0 6px;font-size:13px">לחצו בתוך הנושא או התוכן, ואז על משתנה כדי להוסיף אותו:</p>
+          <div class="chips">${chips}</div>
+          <div class="field"><label>נושא המייל</label><input name="subject" value="${esc(settings.subject)}" ${dis}></div>
+          <div class="field"><label>תוכן</label><textarea name="body" rows="6" ${dis}>${esc(settings.body)}</textarea></div>
+          <label class="check" style="margin-bottom:16px"><input type="checkbox" name="show_details" ${settings.show_details ? "checked" : ""} ${dis}> להוסיף טבלה מסודרת עם פרטי הרכישה (מה נרכש, מחיר, טלפונים, תוקף, מועד, אסמכתא)</label>
+          ${editable ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn primary" id="save-email">${icon("check")} שמירה</button>
+            <button type="button" class="btn" id="test-email">${icon("send")} שליחת מייל בדיקה</button><span class="err" id="email-err"></span></div>` : ""}
+        </div>
+        <div>
+          <div class="form-section">תצוגה מקדימה</div>
+          <div class="muted" style="font-size:12.5px">נושא</div><div style="font-weight:700;margin-bottom:10px" id="pv-subject">—</div>
+          <iframe class="preview-frame" id="pv-frame" sandbox="" title="תצוגה מקדימה"></iframe>
+          <p class="muted" style="font-size:12.5px;margin:6px 0 0">עם פרטי רכישה לדוגמה (קורס). מתעדכן תוך כדי כתיבה.</p>
+        </div>
+      </div>`;
 
-    // תצוגה מקדימה של הנושא עם ערכי דוגמה
-    const sample = { client: currentTenant()?.title || "", product: "פגישת ייעוץ", course: "גמרא עיון", price: "250 ₪", buyer_phone: "0501234567",
-      contact_phone: "0527654321", phones: "0501234567", validity: "365 ימים", date: new Date().toLocaleDateString("he-IL"), time: "10:30", reference: "1234" };
-    const render = (tpl) => tpl.replace(/\{(\w+)\}/g, (m, k) => (k in sample ? sample[k] : m));
-    const updatePreview = (box) => { box.querySelector('[data-preview="subject"]').textContent = render(box.querySelector('[name="subject"]').value) || "—"; };
-    body.querySelectorAll("[data-event]").forEach((box) => { updatePreview(box); box.querySelector('[name="subject"]').addEventListener("input", () => updatePreview(box)); });
+    const q = (n) => body.querySelector(`[name="${n}"]`);
+    const collect = () => ({
+      enabled: q("enabled").checked, show_details: q("show_details").checked,
+      from_name: q("from_name").value, from_email: q("from_email").value, recipients: q("recipients").value, reply_to: q("reply_to").value,
+      subject: q("subject").value, body: q("body").value,
+    });
+    let pvTimer;
+    const preview = () => { clearTimeout(pvTimer); pvTimer = setTimeout(async () => {
+      try {
+        const mail = await api(`/${tenant}/email/preview`, { method: "POST", body: { settings: collect() } });
+        document.getElementById("pv-subject").textContent = mail.subject;
+        document.getElementById("pv-frame").srcdoc = mail.html;
+      } catch (err) { document.getElementById("pv-subject").textContent = err.message; }
+    }, 250); };
+    body.querySelectorAll("input, textarea").forEach((el) => el.addEventListener(el.type === "checkbox" ? "change" : "input", preview));
+    preview();
 
-    let lastFocus = null;
-    body.querySelectorAll("input, textarea").forEach((el) => el.addEventListener("focus", () => { if (el.name === "subject" || el.name === "body") lastFocus = el; }));
+    let lastFocus = q("body");
+    [q("subject"), q("body")].forEach((el) => el.addEventListener("focus", () => { lastFocus = el; }));
     body.querySelectorAll("[data-ph]").forEach((c) => c.onclick = () => {
-      if (!lastFocus || lastFocus.disabled) return toast("לחצו קודם בתוך שדה הנושא או התוכן");
-      const s = lastFocus.selectionStart ?? lastFocus.value.length;
-      lastFocus.value = lastFocus.value.slice(0, s) + c.dataset.ph + lastFocus.value.slice(lastFocus.selectionEnd ?? s);
-      lastFocus.focus();
-      const box = lastFocus.closest("[data-event]"); if (box) updatePreview(box);
+      if (lastFocus.disabled) return;
+      const st = lastFocus.selectionStart ?? lastFocus.value.length;
+      lastFocus.value = lastFocus.value.slice(0, st) + c.dataset.ph + lastFocus.value.slice(lastFocus.selectionEnd ?? st);
+      lastFocus.focus(); preview();
     });
-    body.querySelectorAll("[data-stop]").forEach((el) => el.onclick = (e) => e.stopPropagation());
-    body.querySelectorAll(".event-head").forEach((h) => h.onclick = () => h.parentElement.classList.toggle("open"));
-    body.querySelectorAll('[data-event] [name="enabled"]').forEach((cb) => cb.onchange = () => {
-      const pill = cb.closest(".event-head").querySelector(".pill");
-      pill.className = `pill ${cb.checked ? "on" : "off"}`; pill.textContent = cb.checked ? "נשלח" : "כבוי";
-      if (cb.checked) cb.closest(".event").classList.add("open");
-    });
+    body.querySelectorAll("[data-go]").forEach((a) => a.onclick = (e) => { e.preventDefault(); go(a.dataset.go); });
     const tp = document.getElementById("to-platform"); if (tp) tp.onclick = (e) => { e.preventDefault(); go("platform"); };
 
-    const collect = () => {
-      const v = (n) => body.querySelector(`#email-main [name="${n}"]`).value;
-      const events = {};
-      body.querySelectorAll("[data-event]").forEach((box) => {
-        const q = (n) => box.querySelector(`[name="${n}"]`);
-        events[box.dataset.event] = { enabled: q("enabled").checked, subject: q("subject").value, body: q("body").value, recipients: q("recipients").value };
-      });
-      return { from_name: v("from_name"), from_email: v("from_email"), recipients: v("recipients"), reply_to: v("reply_to"), events };
-    };
     const saveSettings = () => api(`/${tenant}/email`, { method: "PUT", body: collect() });
     const saveBtn = document.getElementById("save-email");
     if (saveBtn) saveBtn.onclick = async (e) => {
@@ -925,16 +1035,44 @@
       try { await saveSettings(); document.getElementById("email-err").textContent = ""; toast("הגדרות המייל נשמרו"); }
       catch (err) { document.getElementById("email-err").textContent = err.message; }
     };
-    body.querySelectorAll("[data-test]").forEach((b) => b.onclick = async (e) => {
-      e.preventDefault();
-      const to = prompt("לאיזו כתובת לשלוח את מייל הבדיקה?", collect().recipients.split(/[,\s]+/)[0] || "");
-      if (to === null) return;
-      try {
-        await saveSettings();
-        await api(`/${tenant}/email/test`, { method: "POST", body: { event: b.dataset.test, to } });
-        toast("מייל בדיקה נשלח – בדקו את תיבת הדואר");
-      } catch (err) { toast(err.message, true); }
+    const testBtn = document.getElementById("test-email");
+    if (testBtn) testBtn.onclick = (e) => { e.preventDefault(); sendTestEmail({}, saveSettings); };
+  }
+
+  /** כל הטקסטים שהמתקשר שומע, לפי קבוצות. ריק = ברירת המחדל. */
+  async function renderTextsTab(body) {
+    const { texts } = await api(`/${tenant}/texts`);
+    const editable = canEdit("settings");
+    const groups = [...new Set(texts.map((x) => x.group))];
+    body.innerHTML = `
+      <div class="notice info">${icon("help")}<div>כל מה שהמתקשר שומע בשיחה. משנים טקסט ושומרים – וזה מה שיושמע מעכשיו.
+        שדה ריק = טקסט ברירת המחדל (מוצג באפור). מילים בסוגריים מסולסלים, למשל <b>{name}</b>, מוחלפות בערך האמיתי.
+        סימני פיסוק (נקודה, פסיק, מקף, גרשיים) לא מוקראים. טקסט ההצעה וההצלחה אפשר לשנות גם בכל קורס ומוצר בנפרד.</div></div>
+      ${groups.map((g) => `<div class="form-section">${esc(g)}</div>${texts.filter((x) => x.group === g).map((x) => `
+        <div class="text-row ${x.value ? "changed" : ""}" data-key="${esc(x.key)}">
+          <div class="lbl"><b>${esc(x.label)}</b>${x.value ? `<span class="pill on" style="margin-top:4px">שונה</span>` : ""}</div>
+          <div><textarea rows="2" placeholder="${esc(x.default)}" ${editable ? "" : "disabled"}>${esc(x.value)}</textarea>
+            ${x.vars ? `<div class="vars">${Object.entries(x.vars).map(([k, v]) => `<b dir="ltr">{${esc(k)}}</b> ${esc(v)}`).join(" · ")}</div>` : ""}
+            ${editable ? `<button type="button" class="btn sm ghost reset" ${x.value ? "" : "hidden"}>חזרה לברירת המחדל</button>` : ""}</div>
+        </div>`).join("")}`).join("")}
+      ${editable ? `<div style="display:flex;gap:10px;align-items:center;margin-top:18px;position:sticky;bottom:0;background:#fff;padding:12px 0">
+        <button class="btn primary" id="save-texts">${icon("check")} שמירת הטקסטים</button><span class="err" id="texts-err"></span></div>` : ""}`;
+    body.querySelectorAll(".text-row").forEach((row) => {
+      const ta = row.querySelector("textarea"), reset = row.querySelector(".reset");
+      ta.addEventListener("input", () => { row.classList.toggle("changed", !!ta.value.trim()); if (reset) reset.hidden = !ta.value.trim(); });
+      // לחיצה על שדה ריק ממלאת את ברירת המחדל, כדי לערוך אותה במקום לכתוב מהתחלה
+      ta.addEventListener("focus", () => { if (!ta.value.trim() && !ta.disabled) { ta.value = ta.placeholder; ta.dispatchEvent(new Event("input")); } });
+      ta.addEventListener("blur", () => { if (ta.value.trim() === ta.placeholder) { ta.value = ""; ta.dispatchEvent(new Event("input")); } });
+      if (reset) reset.onclick = () => { ta.value = ""; ta.dispatchEvent(new Event("input")); };
     });
+    const save = document.getElementById("save-texts");
+    if (save) save.onclick = async (e) => {
+      e.preventDefault();
+      const out = {};
+      body.querySelectorAll(".text-row").forEach((row) => { out[row.dataset.key] = row.querySelector("textarea").value; });
+      try { await api(`/${tenant}/texts`, { method: "PUT", body: { texts: out } }); toast("הטקסטים נשמרו"); renderTextsTab(body); }
+      catch (err) { document.getElementById("texts-err").textContent = err.message; }
+    };
   }
 
   // ---------- מדריך ----------
@@ -964,11 +1102,13 @@
         ${codeBlock(yemotFiles.coursePurchase(t, code))}
         <p class="muted">מה המתקשר ישמע: "אין לך מנוי לקורס…" או "תוקף המנוי הסתיים" ← הצעה עם מחיר (ותוקף אם יש) ← טלפונים: 1 וסולמית למספר שממנו התקשר, או הקשת מספר ואישור ←
         "להוספת מספר נוסף 1, להמשך 2" ← סליקה בנדרים פלוס ← "רכשת בהצלחה את הקורס" וחזרה לתוכן. אם התשלום לא הצליח – לא נשמר כלום.</p>`)}
-      ${step(false, "5. מוצרים ופגישות (לא חובה)", `<p>ב<a href="#products" data-go="products">מוצרים ופגישות</a> יוצרים מוצר / פגישה / פגישה טלפונית, ובשלוחה בימות:</p>
-        <p>ההגדרה המדויקת לכל מוצר מופיעה ב<a href="#settings" data-go="settings">הגדרות ← הגדרות לימות המשיח</a>. בפגישה טלפונית המתקשר מתבקש טלפון לתיאום, ואחרי התשלום נשלח מייל לפי ההגדרות.</p>`)}
-      ${step(email.resend_ready && !!email.settings.from_email, "6. מיילים", `<p>ב<a href="#settings" data-go="settings">הגדרות</a> ← מיילים: כתובת שולח (בדומיין שמאומת ב-Resend), נמענים, ומה לכתוב בכל אירוע.
-        ברירת המחדל: מייל על כל פגישה ופגישה טלפונית. יש כפתור "שליחת מייל בדיקה".</p>`)}
-      ${step(false, "7. בדיקה בטלפון", `<p>מתקשרים, נכנסים לשלוחת הקורס, רוכשים בסכום קטן, ובודקים:</p>
+      ${step(false, "5. מוצרים (לא חובה)", `<p>ב<a href="#products" data-go="products">מוצרים</a> יוצרים כל דבר שנמכר בטלפון – פגישה, שיעור, ספר. אין סוגים: כותבים שם, מחיר, ומה המתקשר ישמע אחרי הרכישה
+        (למשל "הפגישה נקבעה, ניצור איתך קשר"). אם צריך טלפון אחר ליצירת קשר – מסמנים "לאפשר לבחור טלפון אחר".</p>
+        <p>ההגדרה המדויקת לשלוחה בימות מופיעה ב<a href="#settings" data-go="settings">הגדרות ← הגדרות לימות המשיח</a>.</p>`)}
+      ${step(email.resend_ready && !!email.settings.from_email, "6. מיילים", `<p>ב<a href="#settings" data-go="settings">הגדרות</a> ← מיילים: כתובת שולח (בדומיין שמאומת ב-Resend), נמענים, ותבנית כללית עם תצוגה מקדימה.
+        בכל קורס ומוצר, תחת "אחרי הרכישה", בוחרים אם לשלוח מייל, ואפשר נושא ותוכן משלו.</p>`)}
+      ${step(false, "7. טקסטים בשיחה (לא חובה)", `<p>ב<a href="#settings" data-go="settings">הגדרות</a> ← טקסטים בשיחה אפשר לשנות כל משפט שהמתקשר שומע. מה שלא משנים נשאר בברירת המחדל.</p>`)}
+      ${step(false, "8. בדיקה בטלפון", `<p>מתקשרים, נכנסים לשלוחת הקורס, רוכשים בסכום קטן, ובודקים:</p>
         <p>• ב<a href="#ivr_log" data-go="ivr_log">יומן השיחות</a> רואים כל שלב (הצעה, תחילת תשלום, תשלום הצליח, מייל נשלח).<br>
         • ב<a href="#subscriptions" data-go="subscriptions">מנויים</a> מופיע המנוי עם הטלפונים.<br>• כניסה חוזרת לשלוחת הקורס – נכנסים ישר לתוכן.</p>`)}
     </div></div>`;

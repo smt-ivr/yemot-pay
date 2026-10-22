@@ -3,14 +3,21 @@ import { d, goToFolder, idListMessage, n, priceParts, readTap, t, yemotResponse,
 import { notify } from "../email";
 import { V, afterPurchaseFolder, askPhone, exitFolder, failResponse, resolveCourse, type IvrContext } from "./common";
 import { PROVIDER, paymentCode, paymentNotCompleted, startPayment, transactionId } from "./payment";
+import { sayText, type TextKey } from "./texts";
+
+/** "במחיר 100 שקלים", או "ללא תשלום" */
+export function pricePhrase(price: number): Part[] {
+  return price > 0 ? [t("במחיר"), ...priceParts(price)] : priceParts(price);
+}
 
 /**
  * שלוחת רכישת קורס (type=api) - תת-שלוחה של שלוחת הקורס, שאליה check_api מעביר מי שאין לו גישה.
- * פרמטרים מהשלוחה (api_add): key, course, [ok, exit, price, name, source]
+ * פרמטרים מהשלוחה (api_add): client, key, course, [ok, exit, price, name, source]
+ * כל הטקסטים ניתנים לשינוי (הגדרות ← טקסטים בשיחה), וטקסט ההצעה וההצלחה גם בקורס עצמו.
  *
  * 1. "אין לך מנוי" / "תוקף המנוי הסתיים" + "לרכישת גישה לקורס [למשך N ימים] במחיר X" - 1, ליציאה 2.
- * 2. טלפונים: הראשון - 1 וסולמית למספר המתקשר (בלי אישור), או הקשת מספר (עם אישור);
- *    ואז "להוספת מספר נוסף 1, להמשך 2", עד מספר הטלפונים שהוגדר בקורס.
+ * 2. טלפונים: הראשון - המספר שממנו התקשרו. אם בקורס מותר לבחור טלפון אחר: 1 וסולמית למספר המתקשר
+ *    (בלי אישור), או הקשת מספר (עם אישור). ואז "להוספת מספר נוסף 1, להמשך 2", עד מספר הטלפונים שבקורס.
  *    מספר לא תקין, כפול, או שכבר יש לו מנוי לקורס - מתבקש מספר אחר.
  * 3. סליקה בנדרים פלוס דרך ימות (credit_card). ימות חוזרת עם CreditCard_CODE ועם כל הערכים שנאספו:
  *    OK -> רק עכשיו נוצרים הרוכש, המנוי והתשלום. "רכשת בהצלחה" ומעבר לקורס.
@@ -25,6 +32,7 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
   const { item: course, price } = resolved;
   const caller = normalizePhone(req.phone);
   const maxPhones = Math.max(1, course.max_phones || 1);
+  const say = (key: TextKey, vars?: Record<string, string | Part[]>, override?: string | null) => sayText(db.tenant, key, { name: course.name, ...vars }, override);
 
   // 1. פתיחה + תפריט
   const menu = req.get(V.menu);
@@ -35,10 +43,9 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
       return yemotResponse(goToFolder(afterPurchaseFolder(req)));
     }
     await db.log(req.phone, req.callId, "purchase_offer", { course_id: course.id, status });
-    const intro = status === "expired" ? `תוקף המנוי שלך לקורס ${course.name} הסתיים` : `אין לך מנוי לקורס ${course.name}`;
     const duration: Part[] = course.access_days ? [t("למשך"), n(course.access_days), t("ימים")] : [];
     return yemotResponse(
-      readTap([t(intro), t("לרכישת גישה לקורס"), ...duration, ...(price > 0 ? [t("במחיר")] : []), ...priceParts(price), t("הקישו 1, ליציאה הקישו 2")], {
+      readTap([...say(status === "expired" ? "course_expired" : "course_no_sub"), ...say("course_offer", { duration, price: pricePhrase(price) }, course.offer_text)], {
         name: V.menu,
         max: 1,
         min: 1,
@@ -51,33 +58,34 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
     return yemotResponse(goToFolder(exitFolder(req)));
   }
 
-  // 2. טלפונים - כל מספר נבדק (תקין, לא כפול, בלי מנוי קיים) ומספר שהוקש ידנית מאושר
+  // 2. טלפונים - כל מספר נבדק (תקין, לא כפול, בלי מנוי קיים) ומספר שהוקש ידנית מאושר.
+  //    כשאסור לבחור טלפון אחר, הטלפון הראשון הוא המספר שממנו התקשרו (אם הוא לא חסוי).
   const phones: string[] = [];
+  const askFirst = course.ask_phone !== 0 || !caller;
   for (let i = 1; i <= maxPhones; i++) {
-    const asked = await askPhone(req, {
-      base: `${V.phone}${i}`,
-      callerPhone: i === 1 ? caller : null,
-      prompt:
-        i > 1
-          ? [t("הקישו את המספר הנוסף וסולמית")]
-          : caller
-            ? [t("לשימוש במספר שממנו התקשרתם הקישו 1 וסולמית, למספר אחר הקישו את המספר וסולמית")]
-            : [t("הקישו מספר טלפון וסולמית")],
-      check: async (phone) => {
-        if (phones.includes(phone)) return [t("המספר הזה כבר הוקש")];
-        if (await db.hasCourseAccess(phone, course.id)) return [t("למספר"), d(phone), t("כבר יש מנוי לקורס")];
-        return null;
-      },
-    });
-    if ("response" in asked) return asked.response;
-    phones.push(asked.phone);
+    if (i === 1 && !askFirst) {
+      phones.push(caller!);
+    } else {
+      const asked = await askPhone(db, req, {
+        base: `${V.phone}${i}`,
+        callerPhone: i === 1 ? caller : null,
+        prompt: i > 1 ? say("course_next_phone") : caller ? say("course_first_phone") : say("phone_hidden"),
+        check: async (phone) => {
+          if (phones.includes(phone)) return say("phone_repeated");
+          if (await db.hasCourseAccess(phone, course.id)) return say("course_phone_has_sub", { phone: [d(phone)] });
+          return null;
+        },
+      });
+      if ("response" in asked) return asked.response;
+      phones.push(asked.phone);
+    }
 
     if (i === maxPhones) break;
     const moreName = `${V.more}${i}`;
     const more = req.get(moreName);
     if (more === null) {
       return yemotResponse(
-        readTap([t("להוספת מספר נוסף הקישו 1, להמשך הקישו 2")], { name: moreName, max: 1, min: 1, digitsAllowed: ["1", "2"] }),
+        readTap(say("course_add_more"), { name: moreName, max: 1, min: 1, digitsAllowed: ["1", "2"] }),
       );
     }
     if (more !== "1") break;
@@ -94,7 +102,7 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
   // 4. חזרה מהסליקה
   if (code !== "OK") {
     await db.log(req.phone, req.callId, "payment_not_completed", { course_id: course.id, code });
-    return paymentNotCompleted(req);
+    return paymentNotCompleted(db, req);
   }
 
   const tx = transactionId(req);
@@ -112,10 +120,11 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
     waitUntil(
       notify(
         db,
-        "course",
+        course,
         {
-          course: course.name,
-          price: `${price} ₪`,
+          kind: "course",
+          item: course.name,
+          price: price > 0 ? `${price} ₪` : "ללא תשלום",
           phones: phones.join(", "),
           buyer_phone: caller ?? "חסוי",
           validity: course.access_days ? `${course.access_days} ימים` : "לצמיתות",
@@ -125,6 +134,6 @@ export async function handleCourse({ db, req, waitUntil }: IvrContext): Promise<
       ),
     );
   }
-  const validity: Part[] = course.access_days ? [t("המנוי בתוקף ל"), n(course.access_days), t("ימים")] : [];
-  return yemotResponse(idListMessage([t(`רכשת בהצלחה את הקורס ${course.name}`), ...validity]), goToFolder(afterPurchaseFolder(req)));
+  const validity = course.access_days ? say("course_validity", { days: [n(course.access_days)] }) : [];
+  return yemotResponse(idListMessage([...say("course_success", {}, course.success_text), ...validity]), goToFolder(afterPurchaseFolder(req)));
 }

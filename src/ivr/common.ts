@@ -1,8 +1,9 @@
 import type { TenantDb } from "../db/repo";
-import type { Course, Product, ProductType } from "../db/types";
+import type { Course, Product } from "../db/types";
 import { normalizePhone, parsePrice } from "../lib/util";
 import type { YemotRequest } from "../yemot/request";
 import { d, goToFolder, idListMessage, readTap, t, yemotResponse, type Part } from "../yemot/response";
+import { sayText } from "./texts";
 
 /** שמות הערכים שנאספים בשיחה. קידומת yp_ כדי לא להתנגש בערכים אחרים בשלוחה. */
 export const V = {
@@ -36,9 +37,11 @@ const MAX_PHONE_ATTEMPTS = 4;
  * - check: בדיקה נוספת (כפילות, מנוי קיים) - מחזירה הודעה אם המספר לא מתאים.
  */
 export async function askPhone(
+  db: TenantDb,
   req: YemotRequest,
   o: { base: string; prompt: Part[]; callerPhone?: string | null; check?: (phone: string) => Promise<Part[] | null> },
 ): Promise<{ phone: string } | { response: Response }> {
+  const say = (key: Parameters<typeof sayText>[1], vars?: Record<string, string | Part[]>) => sayText(db.tenant, key, vars);
   let problem: Part[] = [];
   for (let a = 1; a <= MAX_PHONE_ATTEMPTS; a++) {
     const name = `${o.base}_${a}`;
@@ -50,7 +53,7 @@ export async function askPhone(
     const shortcut = raw === "1" && !!o.callerPhone;
     const phone = shortcut ? o.callerPhone! : normalizePhone(raw);
     if (!phone) {
-      problem = [t("המספר שהוקש אינו מספר טלפון תקין")];
+      problem = say("phone_invalid");
       continue;
     }
     const issue = o.check ? await o.check(phone) : null;
@@ -64,7 +67,7 @@ export async function askPhone(
       if (confirm === null) {
         return {
           response: yemotResponse(
-            readTap([t("הקשתם"), d(phone), t("לאישור הקישו 1, להקשה מחדש הקישו 2")], { name: confirmName, max: 1, min: 1, digitsAllowed: ["1", "2"] }),
+            readTap(say("phone_confirm", { phone: [d(phone)] }), { name: confirmName, max: 1, min: 1, digitsAllowed: ["1", "2"] }),
           ),
         };
       }
@@ -75,7 +78,7 @@ export async function askPhone(
     }
     return { phone };
   }
-  return { response: failResponse(req, "לא התקבל מספר טלפון תקין") };
+  return { response: failResponse(req, say("phone_failed")) };
 }
 
 function extensionPath(req: YemotRequest): string[] {
@@ -101,8 +104,8 @@ export function afterPurchaseFolder(req: YemotRequest): string {
   return parts.length >= 1 ? `/${parts.slice(0, -1).join("/")}` : exitFolder(req);
 }
 
-export function failResponse(req: YemotRequest, message = "אירעה תקלה, נסו שוב מאוחר יותר"): Response {
-  return yemotResponse(idListMessage([t(message)]), goToFolder(exitFolder(req)));
+export function failResponse(req: YemotRequest, message: string | Part[] = "אירעה תקלה, נסו שוב מאוחר יותר"): Response {
+  return yemotResponse(idListMessage(typeof message === "string" ? [t(message)] : message), goToFolder(exitFolder(req)));
 }
 
 
@@ -116,45 +119,43 @@ function priceSource(req: YemotRequest): "db" | "params" {
   return req.get("price") ? "params" : "db";
 }
 
-export type Resolved<T> = { item: T; price: number } | { error: string; message: string };
+export type Resolved<T> = { item: T; price: number } | { error: string; message: Part[] };
 
 /** allowInactive: גם קורס לא פעיל (בבדיקת גישה - מי שכבר רכש ממשיך לקבל גישה). */
 export async function resolveCourse(db: TenantDb, req: YemotRequest, opts: { allowInactive?: boolean } = {}): Promise<Resolved<Course>> {
+  const say = (key: Parameters<typeof sayText>[1], vars?: Record<string, string>) => sayText(db.tenant, key, vars);
   const ref = req.get("course");
-  if (!ref) return { error: "missing_course_param", message: "השלוחה לא הוגדרה כראוי" };
+  if (!ref) return { error: "missing_course_param", message: say("bad_config") };
 
   const source = priceSource(req);
   const paramPrice = parsePrice(req.get("price"));
-  if (source === "params" && paramPrice === null) return { error: "invalid_price_param", message: "השלוחה לא הוגדרה כראוי" };
+  if (source === "params" && paramPrice === null) return { error: "invalid_price_param", message: say("bad_config") };
 
   let course = await db.findCourse(ref);
   if (!course && source === "params") {
     course = await db.createCourse({ name: req.get("name") ?? ref, ivrCode: ref, price: paramPrice! });
   }
-  if (!course) return { error: "course_not_found", message: "הקורס לא נמצא" };
-  if (!course.is_active && !opts.allowInactive) return { error: "course_inactive", message: `הקורס ${course.name} אינו פעיל כרגע` };
+  if (!course) return { error: "course_not_found", message: say("course_not_found") };
+  if (!course.is_active && !opts.allowInactive) return { error: "course_inactive", message: say("course_inactive", { name: course.name }) };
 
   return { item: course, price: source === "params" ? paramPrice! : course.price };
 }
 
-const PRODUCT_TYPES: ProductType[] = ["product", "meeting", "phone_meeting"];
-
 export async function resolveProduct(db: TenantDb, req: YemotRequest): Promise<Resolved<Product>> {
+  const say = (key: Parameters<typeof sayText>[1], vars?: Record<string, string>) => sayText(db.tenant, key, vars);
   const ref = req.get("product");
-  if (!ref) return { error: "missing_product_param", message: "השלוחה לא הוגדרה כראוי" };
+  if (!ref) return { error: "missing_product_param", message: say("bad_config") };
 
   const source = priceSource(req);
   const paramPrice = parsePrice(req.get("price"));
-  if (source === "params" && paramPrice === null) return { error: "invalid_price_param", message: "השלוחה לא הוגדרה כראוי" };
+  if (source === "params" && paramPrice === null) return { error: "invalid_price_param", message: say("bad_config") };
 
   let product = await db.findProduct(ref);
   if (!product && source === "params") {
-    const typeParam = req.get("type") as ProductType | null;
-    const type = typeParam && PRODUCT_TYPES.includes(typeParam) ? typeParam : "product";
-    product = await db.createProduct({ name: req.get("name") ?? ref, ivrCode: ref, type, price: paramPrice! });
+    product = await db.createProduct({ name: req.get("name") ?? ref, ivrCode: ref, type: "product", price: paramPrice! });
   }
-  if (!product) return { error: "product_not_found", message: "המוצר לא נמצא" };
-  if (!product.is_active) return { error: "product_inactive", message: "המוצר אינו זמין כרגע" };
+  if (!product) return { error: "product_not_found", message: say("product_not_found") };
+  if (!product.is_active) return { error: "product_inactive", message: say("product_inactive", { name: product.name }) };
 
   return { item: product, price: source === "params" ? paramPrice! : product.price };
 }
