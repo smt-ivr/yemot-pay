@@ -1,6 +1,6 @@
 import type { TenantDb } from "./db/repo";
 import type { ItemSettings } from "./db/types";
-import { DEFAULT_EMAIL_FOOTER, emailFooter, getSetting } from "./platform";
+import { DEFAULT_EMAIL_FOOTER, emailSender, getSetting } from "./platform";
 
 /** משתנים שאפשר לשים בנושא ובתוכן: {name} */
 export const PLACEHOLDERS: { key: string; label: string }[] = [
@@ -18,10 +18,6 @@ export const PLACEHOLDERS: { key: string; label: string }[] = [
 export interface EmailSettings {
   /** מתג ראשי: בלי זה לא נשלח שום מייל */
   enabled: boolean;
-  from_name: string;
-  /** כתובת השולח - חייבת להיות בדומיין שמאומת ב-Resend */
-  from_email: string;
-  reply_to: string;
   /** נמענים לכל ההתראות, מופרדים בפסיק */
   recipients: string;
   /** תבנית ברירת המחדל לכל רכישה (קורס או מוצר יכולים להגדיר משלהם) */
@@ -33,9 +29,6 @@ export interface EmailSettings {
 
 export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
   enabled: true,
-  from_name: "",
-  from_email: "",
-  reply_to: "",
   recipients: "",
   subject: "רכישה חדשה: {item}",
   body: "שלום,\n\nהתקבלה רכישה חדשה בטלפון של {item}.",
@@ -78,7 +71,7 @@ export function parseEmailSettings(raw: string | null): EmailSettings {
     saved = {};
   }
   const settings: EmailSettings = { ...DEFAULT_EMAIL_SETTINGS };
-  for (const key of ["from_name", "from_email", "reply_to", "recipients", "subject", "body"] as const) {
+  for (const key of ["recipients", "subject", "body"] as const) {
     if (typeof saved[key] === "string" && (saved[key] as string).trim()) settings[key] = saved[key] as string;
   }
   if (typeof saved.enabled === "boolean") settings.enabled = saved.enabled;
@@ -91,22 +84,21 @@ export function parseEmailSettings(raw: string | null): EmailSettings {
 }
 
 /** בדיקת הגדרות שהגיעו ממערכת הניהול. מחזיר הגדרות נקיות או שגיאה בעברית. */
+export function isEmail(s: string): boolean {
+  return EMAIL_RE.test(s);
+}
+
 export function validateEmailSettings(input: unknown): { settings: EmailSettings } | { error: string } {
   if (!input || typeof input !== "object") return { error: "הגדרות לא תקינות" };
   const body = input as Record<string, unknown>;
   const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
   const settings: EmailSettings = {
     enabled: body.enabled !== false,
-    from_name: str(body.from_name, 100),
-    from_email: str(body.from_email, 200),
-    reply_to: str(body.reply_to, 200),
     recipients: str(body.recipients, 1000),
     subject: str(body.subject, 200) || DEFAULT_EMAIL_SETTINGS.subject,
     body: str(body.body, 5000) || DEFAULT_EMAIL_SETTINGS.body,
     show_details: body.show_details !== false,
   };
-  if (settings.from_email && !EMAIL_RE.test(settings.from_email)) return { error: "כתובת השולח אינה תקינה" };
-  if (settings.reply_to && !EMAIL_RE.test(settings.reply_to)) return { error: "כתובת המענה אינה תקינה" };
   const bad = invalidEmail(settings.recipients);
   if (bad) return { error: `כתובת נמען לא תקינה: ${bad}` };
   return { settings };
@@ -270,16 +262,17 @@ export async function notify(
 
   const apiKey = await getSetting(db.db, "resend_api_key");
   if (!apiKey) return skip("לא הוגדר מפתח Resend (הגדרות מערכת)");
-  if (!settings.from_email) return skip("לא הוגדרה כתובת שולח");
+  const sender = await emailSender(db.db);
+  if (!sender.from_email) return skip("לא הוגדרה כתובת שולח (הגדרות מערכת)");
   const to = opts.overrideTo ?? [...new Set([...splitEmails(settings.recipients), ...splitEmails(item.email_to)])];
   if (to.length === 0) return skip("לא הוגדרו נמענים");
 
-  const email = buildEmail(settings, item, purchase, { test: opts.test, footer: await emailFooter(db.db) });
-  const from = settings.from_name ? `${settings.from_name.replace(/[<>"]/g, "")} <${settings.from_email}>` : settings.from_email;
+  const email = buildEmail(settings, item, purchase, { test: opts.test, footer: sender.footer });
+  const from = sender.from_name ? `${sender.from_name.replace(/[<>"]/g, "")} <${sender.from_email}>` : sender.from_email;
 
   let result: SendResult;
   try {
-    result = await sendEmail(apiKey, { from, to, ...email, replyTo: settings.reply_to || undefined, idempotencyKey: opts.idempotencyKey });
+    result = await sendEmail(apiKey, { from, to, ...email, replyTo: sender.reply_to || undefined, idempotencyKey: opts.idempotencyKey });
   } catch (err) {
     result = { ok: false, error: String(err) };
   }

@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { addDays, normalizePhone, todayIso } from "../src/lib/util";
+import { DEFAULT_EMAIL_SETTINGS, buildEmail } from "../src/email";
 
 const DB = (env as unknown as Env).DB;
 const KEY = "test-key-0123456789abcdef";
@@ -211,8 +212,14 @@ describe("product purchase and email", () => {
 
   beforeAll(async () => {
     await DB.prepare("INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('resend_api_key', 're_test_123456789')").run();
-    const settings = { enabled: true, from_name: "זאבי וייס", from_email: "office@example.com", recipients: "owner@example.com" };
+    const settings = { enabled: true, recipients: "owner@example.com" };
     await DB.prepare("UPDATE tenants SET email_settings = ? WHERE slug = 'zeevi-weiss'").bind(JSON.stringify(settings)).run();
+    // השולח נקבע בהגדרות המערכת
+    await DB.batch([
+      DB.prepare("INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('email_from_name', 'SMT')"),
+      DB.prepare("INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('email_from_email', 'office@example.com')"),
+      DB.prepare("INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('email_reply_to', 'reply@example.com')"),
+    ]);
   });
   afterAll(async () => {
     await DB.prepare("UPDATE tenants SET email_settings = NULL WHERE slug = 'zeevi-weiss'").run();
@@ -233,7 +240,7 @@ describe("product purchase and email", () => {
     expect(await DB.prepare("SELECT status, contact_phone FROM zeevi_weiss_orders ORDER BY id DESC LIMIT 1").first()).toEqual({ status: "paid", contact_phone: "0505555555" });
 
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(sent[0]!.body).toMatchObject({ from: "זאבי וייס <office@example.com>", to: ["owner@example.com"], subject: "נקבעה פגישת ייעוץ מ-0505555555" });
+    expect(sent[0]!.body).toMatchObject({ from: "SMT <office@example.com>", reply_to: "reply@example.com", to: ["owner@example.com"], subject: "נקבעה פגישת ייעוץ מ-0505555555" });
     expect(String(sent[0]!.body.text)).toContain("טלפון ליצירת קשר: 0505555555");
     expect(String(sent[0]!.body.html)).toContain("פרטי הרכישה");
     // בלי שם הלקוח, והטלפון מופיע פעם אחת בטבלה
@@ -257,6 +264,23 @@ describe("product purchase and email", () => {
     // במוצר הזה כובה המייל
     await new Promise((res) => setTimeout(res, 50));
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("email phone rows", () => {
+  const mail = (buyer: string, phones: string) =>
+    buildEmail(DEFAULT_EMAIL_SETTINGS, {}, { kind: "product", item: "פגישה", price: "100 ₪", buyer_phone: buyer, phones, reference: "1" }).text;
+
+  it("shows the phone once when it is the calling number", () => {
+    const text = mail("0501111111", "0501111111");
+    expect(text).toContain("טלפון ליצירת קשר: 0501111111");
+    expect(text).not.toContain("הטלפון שממנו התקשרו");
+  });
+
+  it("adds the calling number only when the contact phone is different", () => {
+    const text = mail("0501111111", "0502222222");
+    expect(text).toContain("הטלפון שממנו התקשרו: 0501111111");
+    expect(text).toContain("טלפון ליצירת קשר: 0502222222");
   });
 });
 
