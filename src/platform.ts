@@ -1,5 +1,12 @@
 /** הגדרות כלליות של הפלטפורמה (לא של לקוח מסוים), בטבלה platform_settings. */
-export type PlatformKey = "resend_api_key";
+export type PlatformKey = "resend_api_key" | "email_footer";
+
+/** השורה בתחתית כל מייל, כשמנהל המערכת לא הגדיר אחרת */
+export const DEFAULT_EMAIL_FOOTER = "מייל אוטומטי · פותח ע״י SMT";
+
+export async function emailFooter(db: D1Database): Promise<string> {
+  return (await getSetting(db, "email_footer"))?.trim() || DEFAULT_EMAIL_FOOTER;
+}
 
 export async function getSetting(db: D1Database, key: PlatformKey): Promise<string | null> {
   const row = await db.prepare("SELECT value FROM platform_settings WHERE key = ?").bind(key).first<{ value: string | null }>();
