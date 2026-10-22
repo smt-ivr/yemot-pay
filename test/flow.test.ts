@@ -236,6 +236,9 @@ describe("product purchase and email", () => {
     expect(sent[0]!.body).toMatchObject({ from: "זאבי וייס <office@example.com>", to: ["owner@example.com"], subject: "נקבעה פגישת ייעוץ מ-0505555555" });
     expect(String(sent[0]!.body.text)).toContain("טלפון ליצירת קשר: 0505555555");
     expect(String(sent[0]!.body.html)).toContain("פרטי הרכישה");
+    // בלי שם הלקוח, והטלפון מופיע פעם אחת בטבלה
+    expect(String(sent[0]!.body.html)).not.toContain("זאבי וייס");
+    expect(String(sent[0]!.body.text).split("0505555555").length - 1).toBe(1);
     expect(sent[0]!.headers.get("authorization")).toBe("Bearer re_test_123456789");
   });
 

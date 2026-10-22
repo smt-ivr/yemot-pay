@@ -208,7 +208,7 @@ async function emailApi(request: Request, p: Principal, db: TenantDb, sub: strin
     if ("error" in settings) return error(settings.error);
     const { item, purchase } = await sampleFor(db, body);
     const override = body.item && typeof body.item === "object" ? { email_subject: body.item.email_subject, email_body: body.item.email_body } : {};
-    return json(buildEmail(db.tenant.title, settings.settings, { ...item, ...override }, purchase, { footer: await emailFooter(db.db) }));
+    return json(buildEmail(settings.settings, { ...item, ...override }, purchase, { footer: await emailFooter(db.db) }));
   }
   if (!can(p, "settings", "edit")) return forbidden();
   if (!sub && method === "PUT") {

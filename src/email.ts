@@ -13,7 +13,6 @@ export const PLACEHOLDERS: { key: string; label: string }[] = [
   { key: "date", label: "תאריך" },
   { key: "time", label: "שעה" },
   { key: "reference", label: "מספר אסמכתא" },
-  { key: "client", label: "שם העסק" },
 ];
 
 export interface EmailSettings {
@@ -127,21 +126,25 @@ export function israelDateTime(now = new Date()): { date: string; time: string }
   return { date, time };
 }
 
+const splitPhones = (list: string | undefined) => (list ?? "").split(/[,\s]+/).filter(Boolean);
+
 /** שורות טבלת פרטי הרכישה */
 function detailRows(v: Record<string, string>, kind: PurchaseVars["kind"]): [string, string][] {
   const rows: [string, string][] = [
     [KIND_LABEL[kind], v.item ?? ""],
     ["מחיר", v.price ?? ""],
-    ["טלפון הרוכש", v.buyer_phone ?? ""],
-    [kind === "course" ? "טלפונים עם גישה" : "טלפון ליצירת קשר", v.phones ?? ""],
   ];
+  // טלפון הרוכש מוצג רק אם הוא לא כבר ברשימת הטלפונים (בדרך כלל הוא שם)
+  const phones = splitPhones(v.phones);
+  if (v.buyer_phone && !phones.includes(v.buyer_phone)) rows.push(["הטלפון שממנו התקשרו", v.buyer_phone]);
+  rows.push([kind === "course" ? (phones.length > 1 ? "טלפונים עם גישה" : "טלפון עם גישה") : "טלפון ליצירת קשר", phones.join(", ")]);
   if (kind === "course") rows.push(["תוקף", v.validity ?? ""]);
   rows.push(["מועד הרכישה", `${v.date} בשעה ${v.time}`], ["מספר אסמכתא", v.reference ?? ""]);
   return rows.filter(([, value]) => value.trim() !== "");
 }
 
-/** עיצוב המייל: כותרת עם שם העסק, הטקסט החופשי, טבלת פרטים, ושורת סיום. */
-export function emailHtml(o: { client: string; subject: string; body: string; details: [string, string][] | null; footer: string }): string {
+/** עיצוב המייל: כותרת, הטקסט החופשי, טבלת פרטים, ושורת סיום. */
+export function emailHtml(o: { subject: string; body: string; details: [string, string][] | null; footer: string }): string {
   const paragraphs = escapeHtml(o.body)
     .split(/\n{2,}/)
     .filter((p) => p.trim())
@@ -164,7 +167,6 @@ ${o.details
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:28px 12px"><tr><td align="center">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,.06)">
 <tr><td style="background:#4f46e5;background-image:linear-gradient(135deg,#4f46e5,#7c3aed);padding:26px 32px;text-align:right">
-<div style="color:#c7d2fe;font-size:13px;font-weight:bold;margin:0 0 6px">${escapeHtml(o.client)}</div>
 <div style="color:#ffffff;font-size:22px;font-weight:bold;line-height:1.35">${escapeHtml(o.subject)}</div>
 </td></tr>
 <tr><td style="padding:28px 32px 10px;color:#1e293b;font-size:15px;line-height:1.75;text-align:right">${paragraphs}</td></tr>
@@ -184,7 +186,6 @@ export interface BuiltEmail {
  * footer = השורה בתחתית המייל (הגדרות מערכת של המנהל).
  */
 export function buildEmail(
-  client: string,
   settings: EmailSettings,
   item: ItemSettings,
   purchase: PurchaseVars,
@@ -192,7 +193,8 @@ export function buildEmail(
 ): BuiltEmail {
   const footer = opts.footer ?? DEFAULT_EMAIL_FOOTER;
   const vars: Record<string, string> = {
-    client,
+    // שם הלקוח לא מופיע במייל. {client} מתבנית ישנה פשוט נעלם
+    client: "",
     ...israelDateTime(opts.now),
     ...purchase,
     validity: purchase.validity ?? "",
@@ -206,7 +208,7 @@ export function buildEmail(
   const body = renderTemplate(item.email_body?.trim() || settings.body, vars);
   const details = settings.show_details ? detailRows(vars, purchase.kind) : null;
   const text = [body, ...(details ? ["", ...details.map(([k, v]) => `${k}: ${v}`)] : []), "", footer].join("\n");
-  return { subject, html: emailHtml({ client, subject, body, details, footer }), text };
+  return { subject, html: emailHtml({ subject, body, details, footer }), text };
 }
 
 export const SAMPLE_PURCHASE: PurchaseVars = {
@@ -272,7 +274,7 @@ export async function notify(
   const to = opts.overrideTo ?? [...new Set([...splitEmails(settings.recipients), ...splitEmails(item.email_to)])];
   if (to.length === 0) return skip("לא הוגדרו נמענים");
 
-  const email = buildEmail(db.tenant.title, settings, item, purchase, { test: opts.test, footer: await emailFooter(db.db) });
+  const email = buildEmail(settings, item, purchase, { test: opts.test, footer: await emailFooter(db.db) });
   const from = settings.from_name ? `${settings.from_name.replace(/[<>"]/g, "")} <${settings.from_email}>` : settings.from_email;
 
   let result: SendResult;
