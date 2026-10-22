@@ -132,6 +132,8 @@ export async function setup(env: Env): Promise<void> {
     ),
   ]);
 
+  await migrateEmailSender(db);
+
   for (const tenant of await listTenants(db)) {
     const table = `${tenant.prefix}courses`;
     const exists = await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").bind(table).first();
@@ -155,6 +157,27 @@ export async function setup(env: Env): Promise<void> {
         db.prepare(`CREATE INDEX IF NOT EXISTS idx_${tenant.prefix}sub_phones_phone ON ${phones}(phone)`),
       ]);
     }
+  }
+}
+
+/**
+ * השולח (שם, כתובת, כתובת למענה) עבר מהגדרות הלקוח להגדרות המערכת.
+ * אם עוד לא הוגדר שם - לוקחים את מה שהוגדר אצל הלקוח הראשון שהגדיר.
+ */
+async function migrateEmailSender(db: D1Database): Promise<void> {
+  if (await db.prepare("SELECT 1 FROM platform_settings WHERE key = 'email_from_email'").first()) return;
+  for (const t of await listTenants(db)) {
+    let old: { from_name?: string; from_email?: string; reply_to?: string } = {};
+    try {
+      old = JSON.parse(t.email_settings ?? "{}");
+    } catch {
+      continue;
+    }
+    if (!old.from_email?.trim()) continue;
+    const put = (key: string, value: string | undefined) =>
+      db.prepare("INSERT OR IGNORE INTO platform_settings (key, value) VALUES (?, ?)").bind(key, value?.trim() || null);
+    await db.batch([put("email_from_email", old.from_email), put("email_from_name", old.from_name), put("email_reply_to", old.reply_to)]);
+    return;
   }
 }
 

@@ -962,27 +962,24 @@
   }
 
   async function renderEmailTab(body) {
-    const { settings, resend_ready } = await api(`/${tenant}/email`);
+    const { settings, resend_ready, sender } = await api(`/${tenant}/email`);
     const editable = canEdit("settings");
     const dis = editable ? "" : "disabled";
     const chips = META.email.placeholders.map((p) => `<span class="chip" data-ph="{${p.key}}" title="${esc(p.label)}">{${esc(p.key)}} · ${esc(p.label)}</span>`).join("");
     body.innerHTML = `
       ${resend_ready ? "" : `<div class="notice">${icon("help")}<div>עוד לא הוגדר מפתח Resend ${isAdmin() ? `– <a href="#platform" id="to-platform">להגדרות מערכת</a>` : "– פנו למנהל המערכת"}. בלי זה מיילים לא יישלחו.</div></div>`}
-      <div class="notice info">${icon("help")}<div>כאן ההגדרות <b>הכלליות</b>: מאיזו כתובת נשלח, למי, ואיך נראה המייל.
+      <div class="notice info">${icon("help")}<div>כאן ההגדרות <b>הכלליות</b> של הלקוח: למי נשלח, ואיך נראה המייל.
         בכל <a href="#courses" data-go="courses">קורס</a> ו<a href="#products" data-go="products">מוצר</a>, בקבוצה "אחרי הרכישה", בוחרים אם לשלוח עליו מייל, ואפשר לתת לו נושא, תוכן ונמענים משלו.</div></div>
       <label class="switch-row"><input type="checkbox" name="enabled" ${settings.enabled ? "checked" : ""} ${dis} style="width:20px;height:20px;accent-color:var(--brand)">
         <div><b>שליחת מיילים פעילה</b><span class="muted">כבוי = לא נשלח שום מייל, גם אם בקורס או במוצר מסומן לשלוח</span></div></label>
       <div class="email-grid">
         <div>
-          <div class="form-section">שולח ונמענים</div>
-          <div class="grid2">
-            <div class="field"><label>שם השולח</label><input name="from_name" value="${esc(settings.from_name)}" placeholder="לא חובה" ${dis}></div>
-            <div class="field"><label>כתובת השולח *</label><input name="from_email" dir="ltr" value="${esc(settings.from_email)}" placeholder="office@your-domain.co.il" ${dis}>
-              <div class="help">בדומיין שמאומת ב-Resend</div></div>
-          </div>
-          <div class="field"><label>נמענים</label><input name="recipients" dir="ltr" value="${esc(settings.recipients)}" placeholder="owner@domain.co.il, office@domain.co.il" ${dis}>
-            <div class="help">מי מקבל את המיילים על כל רכישה. כמה כתובות – מופרדות בפסיק</div></div>
-          <div class="field"><label>כתובת למענה (Reply-To)</label><input name="reply_to" dir="ltr" value="${esc(settings.reply_to)}" placeholder="לא חובה" ${dis}></div>
+          <div class="form-section">נמענים</div>
+          <div class="field"><label>מי מקבל את המיילים</label><input name="recipients" dir="ltr" value="${esc(settings.recipients)}" placeholder="owner@domain.co.il, office@domain.co.il" ${dis}>
+            <div class="help">על כל רכישה. כמה כתובות – מופרדות בפסיק</div></div>
+          <div class="muted" style="font-size:13px;margin:-4px 0 14px">נשלח מ: ${sender.from_email
+            ? `<b dir="ltr">${esc(sender.from_name ? `${sender.from_name} <${sender.from_email}>` : sender.from_email)}</b>`
+            : `<span class="pill warn">לא הוגדר</span>`} ${isAdmin() ? `· <a href="#platform" data-go="platform">שינוי בהגדרות המערכת</a>` : "(נקבע על ידי מנהל המערכת)"}</div>
           <div class="form-section">התבנית הכללית</div>
           <p class="muted" style="margin:-4px 0 6px;font-size:13px">לחצו בתוך הנושא או התוכן, ואז על משתנה כדי להוסיף אותו:</p>
           <div class="chips">${chips}</div>
@@ -1003,7 +1000,7 @@
     const q = (n) => body.querySelector(`[name="${n}"]`);
     const collect = () => ({
       enabled: q("enabled").checked, show_details: q("show_details").checked,
-      from_name: q("from_name").value, from_email: q("from_email").value, recipients: q("recipients").value, reply_to: q("reply_to").value,
+      recipients: q("recipients").value,
       subject: q("subject").value, body: q("body").value,
     });
     let pvTimer;
@@ -1105,7 +1102,7 @@
       ${step(false, "5. מוצרים (לא חובה)", `<p>ב<a href="#products" data-go="products">מוצרים</a> יוצרים כל דבר שנמכר בטלפון – פגישה, שיעור, ספר. אין סוגים: כותבים שם, מחיר, ומה המתקשר ישמע אחרי הרכישה
         (למשל "הפגישה נקבעה, ניצור איתך קשר"). אם צריך טלפון אחר ליצירת קשר – מסמנים "לאפשר לבחור טלפון אחר".</p>
         <p>ההגדרה המדויקת לשלוחה בימות מופיעה ב<a href="#settings" data-go="settings">הגדרות ← הגדרות לימות המשיח</a>.</p>`)}
-      ${step(email.resend_ready && !!email.settings.from_email, "6. מיילים", `<p>ב<a href="#settings" data-go="settings">הגדרות</a> ← מיילים: כתובת שולח (בדומיין שמאומת ב-Resend), נמענים, ותבנית כללית עם תצוגה מקדימה.
+      ${step(email.resend_ready && !!email.sender?.from_email && !!email.settings.recipients, "6. מיילים", `<p>ב<a href="#settings" data-go="settings">הגדרות</a> ← מיילים: נמענים ותבנית כללית עם תצוגה מקדימה. השולח נקבע בהגדרות המערכת של המנהל.
         בכל קורס ומוצר, תחת "אחרי הרכישה", בוחרים אם לשלוח מייל, ואפשר נושא ותוכן משלו.</p>`)}
       ${step(false, "7. טקסטים בשיחה (לא חובה)", `<p>ב<a href="#settings" data-go="settings">הגדרות</a> ← טקסטים בשיחה אפשר לשנות כל משפט שהמתקשר שומע. מה שלא משנים נשאר בברירת המחדל.</p>`)}
       ${step(false, "8. בדיקה בטלפון", `<p>מתקשרים, נכנסים לשלוחת הקורס, רוכשים בסכום קטן, ובודקים:</p>
@@ -1259,7 +1256,7 @@
       const p = await api("/platform");
       main.innerHTML = `<div class="card"><div class="card-head">${icon("mail")}<h3>Resend – שליחת מיילים</h3>
         <div class="spacer"></div><span class="pill ${p.resend_api_key ? "on" : "warn"}">${p.resend_api_key ? "מחובר" : "לא מוגדר"}</span></div><div class="card-body">
-        <p class="muted" style="margin-top:0">המפתח משמש לשליחת המיילים של כל הלקוחות. כל לקוח קובע בהגדרות שלו מאיזו כתובת לשלוח – הכתובת חייבת להיות בדומיין שמאומת ב-Resend.</p>
+        <p class="muted" style="margin-top:0">המפתח משמש לשליחת המיילים של כל הלקוחות.</p>
         <div class="field"><label>מפתח API של Resend</label><input id="resend" dir="ltr" placeholder="re_...">
           <div class="help">${p.resend_api_key ? `מוגדר: <span class="mono">${esc(p.resend_api_key)}</span>. השאירו ריק כדי לא לשנות.` : "עדיין לא מוגדר."} המפתח לא מוצג במלואו אחרי השמירה.</div></div>
         <div style="display:flex;gap:8px"><button class="btn primary" id="save-platform">${icon("check")} שמירה</button>
@@ -1267,16 +1264,29 @@
         <div class="section-title">איך משיגים מפתח</div>
         <p>1. נכנסים ל-resend.com ← <b>API Keys</b> ← <b>Create API Key</b> (הרשאת Sending access מספיקה).<br>
         2. ב-<b>Domains</b> מוודאים שהדומיין שלכם במצב Verified.<br>3. מדביקים כאן את המפתח ושומרים.<br>
-        4. אצל כל לקוח: הגדרות ← מיילים ← כתובת שולח בדומיין הזה ← "שליחת מייל בדיקה".</p>
+        4. למטה: כתובת שולח בדומיין הזה. ואז אצל לקוח: הגדרות ← מיילים ← "שליחת מייל בדיקה".</p>
       </div></div>
-      <div class="card" style="margin-top:16px"><div class="card-head">${icon("edit")}<h3>שורת התחתית בכל מייל</h3></div><div class="card-body">
-        <p class="muted" style="margin-top:0">מופיעה בתחתית כל המיילים של כל הלקוחות.</p>
-        <div class="field"><label>הטקסט</label><input id="footer" value="${esc(p.email_footer)}" placeholder="${esc(p.default_email_footer)}" maxlength="200">
+      <div class="card" style="margin-top:16px"><div class="card-head">${icon("send")}<h3>השולח ושורת התחתית</h3>
+        <div class="spacer"></div><span class="pill ${p.email_from_email ? "on" : "warn"}">${p.email_from_email ? "מוגדר" : "חסרה כתובת שולח"}</span></div><div class="card-body">
+        <p class="muted" style="margin-top:0">משותף לכל המיילים של כל הלקוחות. כל לקוח קובע בעצמו רק למי נשלח ומה כתוב.</p>
+        <div class="grid2">
+          <div class="field"><label>שם השולח</label><input id="from_name" value="${esc(p.email_from_name)}" placeholder="למשל: SMT" maxlength="200">
+            <div class="help">מה שרואים בתיבת הדואר ליד הכתובת. לא חובה</div></div>
+          <div class="field"><label>כתובת השולח *</label><input id="from_email" dir="ltr" value="${esc(p.email_from_email)}" placeholder="noreply@your-domain.co.il">
+            <div class="help">חייבת להיות בדומיין שמאומת ב-Resend</div></div>
+        </div>
+        <div class="field"><label>כתובת למענה (Reply-To)</label><input id="reply_to" dir="ltr" value="${esc(p.email_reply_to)}" placeholder="לא חובה">
+          <div class="help">לאן מגיעה תשובה למייל. ריק = לכתובת השולח</div></div>
+        <div class="field"><label>שורת התחתית</label><input id="footer" value="${esc(p.email_footer)}" placeholder="${esc(p.default_email_footer)}" maxlength="200">
           <div class="help">ריק = ברירת המחדל: ${esc(p.default_email_footer)}</div></div>
-        <button class="btn primary" id="save-footer">${icon("check")} שמירה</button>
+        <div style="display:flex;gap:10px;align-items:center"><button class="btn primary" id="save-sender">${icon("check")} שמירה</button><span class="err" id="sender-err"></span></div>
       </div></div>`;
-      document.getElementById("save-footer").onclick = async () => {
-        try { await api("/platform", { method: "PUT", body: { email_footer: document.getElementById("footer").value } }); toast("נשמר"); renderPlatform(); } catch (err) { toast(err.message, true); }
+      document.getElementById("save-sender").onclick = async () => {
+        const v = (id) => document.getElementById(id).value;
+        try {
+          await api("/platform", { method: "PUT", body: { email_from_name: v("from_name"), email_from_email: v("from_email"), email_reply_to: v("reply_to"), email_footer: v("footer") } });
+          toast("נשמר"); renderPlatform();
+        } catch (err) { document.getElementById("sender-err").textContent = err.message; }
       };
       document.getElementById("save-platform").onclick = async () => {
         const key = document.getElementById("resend").value.trim();

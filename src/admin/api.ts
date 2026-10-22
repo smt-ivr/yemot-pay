@@ -1,10 +1,10 @@
 import { TenantDb } from "../db/repo";
-import { PLACEHOLDERS, SAMPLE_PURCHASE, buildEmail, invalidEmail, notify, parseEmailSettings, splitEmails, validateEmailSettings, type PurchaseVars } from "../email";
+import { PLACEHOLDERS, SAMPLE_PURCHASE, buildEmail, invalidEmail, isEmail, notify, parseEmailSettings, splitEmails, validateEmailSettings, type PurchaseVars } from "../email";
 import type { ItemSettings } from "../db/types";
 import { TEXTS, isTextKey, parseTexts } from "../ivr/texts";
 import type { Env } from "../env";
 import { addDays, normalizePhone, todayIso } from "../lib/util";
-import { DEFAULT_EMAIL_FOOTER, emailFooter, getSetting, maskSecret, setSetting } from "../platform";
+import { DEFAULT_EMAIL_FOOTER, emailFooter, emailSender, getSetting, maskSecret, setSetting } from "../platform";
 import { SLUG_RE, createTenant, getTenant, listTenants, rotateTenantKey, updateTenant, type TenantConfig } from "../tenants";
 import { ENTITIES, getEntity, type Entity, type EntityName, type Field } from "./entities";
 import {
@@ -122,7 +122,7 @@ function tenantInfo(t: TenantConfig) {
 /** פרטי לקוח לרשימת הלקוחות של מנהל המערכת (בלי הגדרות המייל הגולמיות) */
 function tenantRow(t: TenantConfig) {
   const { email_settings, ivr_texts, ...rest } = t;
-  return { ...rest, email_ready: !!parseEmailSettings(email_settings).from_email };
+  return { ...rest, email_ready: !!splitEmails(parseEmailSettings(email_settings).recipients).length };
 }
 
 async function meta(env: Env, p: Principal) {
@@ -153,12 +153,22 @@ async function meta(env: Env, p: Principal) {
 async function platformApi(request: Request, env: Env): Promise<Response> {
   const current = async () => ({
     resend_api_key: maskSecret(await getSetting(env.DB, "resend_api_key")),
+    email_from_name: (await getSetting(env.DB, "email_from_name")) ?? "",
+    email_from_email: (await getSetting(env.DB, "email_from_email")) ?? "",
+    email_reply_to: (await getSetting(env.DB, "email_reply_to")) ?? "",
     email_footer: (await getSetting(env.DB, "email_footer")) ?? "",
     default_email_footer: DEFAULT_EMAIL_FOOTER,
   });
   if (request.method === "GET") return json(await current());
   if (request.method !== "PUT") return error("פעולה לא נתמכת", 405);
-  const body = (await request.json().catch(() => ({}))) as { resend_api_key?: unknown; email_footer?: unknown };
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  for (const [key, label] of [["email_from_email", "כתובת השולח"], ["email_reply_to", "כתובת המענה"]] as const) {
+    const v = body[key];
+    if (typeof v === "string" && v.trim() && !isEmail(v.trim())) return error(`${label} אינה תקינה`);
+  }
+  for (const key of ["email_from_name", "email_from_email", "email_reply_to"] as const) {
+    if (typeof body[key] === "string") await setSetting(env.DB, key, (body[key] as string).trim().slice(0, 200) || null);
+  }
   if (typeof body.resend_api_key === "string") {
     const key = body.resend_api_key.trim();
     if (key && !/^re_[A-Za-z0-9_]{8,}$/.test(key)) return error("מפתח Resend מתחיל ב-re_");
@@ -199,7 +209,12 @@ async function emailApi(request: Request, p: Principal, db: TenantDb, sub: strin
   const method = request.method;
   if (!sub && method === "GET") {
     if (!can(p, "settings", "view")) return forbidden();
-    return json({ settings: parseEmailSettings(db.tenant.email_settings), resend_ready: !!(await getSetting(db.db, "resend_api_key")) });
+    const sender = await emailSender(db.db);
+    return json({
+      settings: parseEmailSettings(db.tenant.email_settings),
+      resend_ready: !!(await getSetting(db.db, "resend_api_key")),
+      sender: { from_name: sender.from_name, from_email: sender.from_email, reply_to: sender.reply_to },
+    });
   }
   if (sub === "preview" && method === "POST") {
     if (!can(p, "settings", "view") && !can(p, "courses", "view") && !can(p, "products", "view")) return forbidden();

@@ -239,14 +239,20 @@ describe("admin", () => {
   });
 
   it("saves email settings with validation and keeps the Resend key masked", async () => {
-    expect((await api("/zeevi-weiss/email", "PUT", { from_email: "not-an-email" })).status).toBe(400);
+    expect((await api("/zeevi-weiss/email", "PUT", { recipients: "not-an-email" })).status).toBe(400);
+    // השולח: רק בהגדרות המערכת
+    expect((await api("/platform", "PUT", { email_from_email: "bad" })).status).toBe(400);
+    const platform = await api("/platform", "PUT", { email_from_name: "SMT", email_from_email: "noreply@example.com", email_reply_to: "" });
+    expect(platform.data).toMatchObject({ email_from_name: "SMT", email_from_email: "noreply@example.com", email_reply_to: "" });
+    expect((await api("/zeevi-weiss/email")).data.sender).toEqual({ from_name: "SMT", from_email: "noreply@example.com", reply_to: "" });
     const saved = await api("/zeevi-weiss/email", "PUT", {
-      enabled: true, from_name: "זאבי", from_email: "office@example.com", recipients: "a@example.com, b@example.com", reply_to: "",
+      enabled: true, recipients: "a@example.com, b@example.com",
       subject: "רכישה: {item}", body: "", show_details: true,
     });
     expect(saved.status).toBe(200);
     const got = (await api("/zeevi-weiss/email")).data.settings;
-    expect(got).toMatchObject({ enabled: true, from_email: "office@example.com", recipients: "a@example.com, b@example.com", subject: "רכישה: {item}" });
+    expect(got).not.toHaveProperty("from_email");
+    expect(got).toMatchObject({ enabled: true, recipients: "a@example.com, b@example.com", subject: "רכישה: {item}" });
     expect(got.body).toContain("התקבלה רכישה חדשה");
 
     // תצוגה מקדימה: נושא עם ערכי דוגמה, ועיצוב עם טבלת פרטים
