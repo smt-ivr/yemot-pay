@@ -1,18 +1,20 @@
 import { notify } from "../email";
 import { normalizePhone } from "../lib/util";
-import { goToFolder, idListMessage, priceParts, readTap, t, yemotResponse } from "../yemot/response";
+import { goToFolder, idListMessage, readTap, yemotResponse, type Part } from "../yemot/response";
 import { V, askPhone, exitFolder, failResponse, resolveProduct, type IvrContext } from "./common";
+import { pricePhrase } from "./course";
 import { PROVIDER, paymentCode, paymentNotCompleted, startPayment, transactionId } from "./payment";
-
-const TYPE_LABEL = { product: "", meeting: "פגישה", phone_meeting: "פגישה טלפונית" } as const;
+import { sayText, type TextKey } from "./texts";
 
 /**
- * שלוחת רכישת מוצר / פגישה / פגישה טלפונית (type=api).
- * פרמטרים: client, key, product, [ok, exit, price, name, type, source]
+ * שלוחת רכישת מוצר (type=api). מוצר, פגישה, שיעור - הכל אותו דבר, ההבדל רק בטקסטים שמגדירים.
+ * פרמטרים: client, key, product, [ok, exit, price, name, source]
  *
- * 1. "לרכישת X במחיר Y הקישו 1, ליציאה 2".
- * 2. בפגישה טלפונית: טלפון לתיאום (1 וסולמית = המספר שממנו התקשרו, או הקשת מספר עם אישור).
- * 3. סליקה. OK -> רק עכשיו נוצרים הרוכש, ההזמנה והתשלום, ונשלח מייל לפי הגדרות הלקוח. אחרת לא נוצר כלום.
+ * 1. "לרכישת X במחיר Y הקישו 1, ליציאה 2" (או טקסט ההצעה שהוגדר במוצר).
+ * 2. טלפון ליצירת קשר: המספר שממנו התקשרו. אם במוצר מותר לבחור טלפון אחר (או שהמספר חסוי) -
+ *    1 וסולמית = המספר שממנו התקשרו, או הקשת מספר עם אישור.
+ * 3. סליקה. OK -> רק עכשיו נוצרים הרוכש, ההזמנה והתשלום, ונשלח מייל לפי ההגדרות. אחרת לא נוצר כלום.
+ * 4. טקסט ההצלחה שהוגדר במוצר (או הכללי).
  */
 export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise<Response> {
   const resolved = await resolveProduct(db, req);
@@ -22,17 +24,13 @@ export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise
   }
   const { item: product, price } = resolved;
   const caller = normalizePhone(req.phone);
+  const say = (key: TextKey, vars?: Record<string, string | Part[]>, override?: string | null) => sayText(db.tenant, key, { name: product.name, ...vars }, override);
 
   const menu = req.get(V.menu);
   if (menu === null) {
     await db.log(req.phone, req.callId, "purchase_offer", { product_id: product.id });
     return yemotResponse(
-      readTap([t(`לרכישת ${product.name}`), ...(price > 0 ? [t("במחיר")] : []), ...priceParts(price), t("הקישו 1, ליציאה הקישו 2")], {
-        name: V.menu,
-        max: 1,
-        min: 1,
-        digitsAllowed: ["1", "2"],
-      }),
+      readTap(say("product_offer", { price: pricePhrase(price) }, product.offer_text), { name: V.menu, max: 1, min: 1, digitsAllowed: ["1", "2"] }),
     );
   }
   if (menu !== "1") {
@@ -41,20 +39,17 @@ export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise
   }
 
   let contact = caller;
-  if (product.type === "phone_meeting") {
-    const asked = await askPhone(req, {
+  if (product.ask_phone === 1 || !caller) {
+    const asked = await askPhone(db, req, {
       base: V.contact,
       callerPhone: caller,
-      prompt: caller
-        ? [t("לתיאום הפגישה במספר שממנו התקשרתם הקישו 1 וסולמית, למספר אחר הקישו את המספר וסולמית")]
-        : [t("הקישו מספר טלפון לתיאום הפגישה וסולמית")],
+      prompt: caller ? say("product_phone") : say("phone_hidden"),
     });
     if ("response" in asked) return asked.response;
     contact = asked.phone;
   }
+  const buyerPhone = caller ?? contact!;
 
-  const buyerPhone = caller ?? contact;
-  if (!buyerPhone) return failResponse(req, "לא ניתן לזהות את מספר הטלפון");
   const free = price <= 0;
   const code = free ? "OK" : paymentCode(req);
   if (code === null) {
@@ -63,7 +58,7 @@ export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise
   }
   if (code !== "OK") {
     await db.log(req.phone, req.callId, "payment_not_completed", { product_id: product.id, code });
-    return paymentNotCompleted(req);
+    return paymentNotCompleted(db, req);
   }
 
   const tx = transactionId(req);
@@ -74,15 +69,18 @@ export async function handleProduct({ db, req, waitUntil }: IvrContext): Promise
     waitUntil(
       notify(
         db,
-        product.type,
-        { product: product.name, price: `${price} ₪`, buyer_phone: caller ?? "חסוי", contact_phone: contact ?? "", reference: String(orderId) },
+        product,
+        {
+          kind: "product",
+          item: product.name,
+          price: price > 0 ? `${price} ₪` : "ללא תשלום",
+          buyer_phone: caller ?? "חסוי",
+          phones: contact ?? "",
+          reference: String(orderId),
+        },
         { idempotencyKey: `${db.tenant.slug}-order-${orderId}` },
       ),
     );
   }
-  const done =
-    product.type === "product"
-      ? [t(`רכשת בהצלחה את ${product.name}`)]
-      : [t(`ה${TYPE_LABEL[product.type]} נרכשה בהצלחה`), t("ניצור איתך קשר לתיאום המועד")];
-  return yemotResponse(idListMessage(done), goToFolder(req.get("ok") ?? exitFolder(req)));
+  return yemotResponse(idListMessage(say("product_success", {}, product.success_text)), goToFolder(req.get("ok") ?? exitFolder(req)));
 }

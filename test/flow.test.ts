@@ -1,6 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { addDays, normalizePhone, todayIso } from "../src/lib/util";
 
@@ -191,40 +191,92 @@ describe("course settings", () => {
   });
 });
 
-describe("meeting purchase and email", () => {
+describe("product purchase and email", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("phone meeting: confirms a typed contact number, pays, and emails the business", async () => {
-    await DB.prepare("INSERT INTO platform_settings (key, value) VALUES ('resend_api_key', 're_test_123456789')").run();
-    const settings = { from_name: "זאבי וייס", from_email: "office@example.com", reply_to: "", recipients: "owner@example.com", events: {} };
-    await DB.prepare("UPDATE tenants SET email_settings = ? WHERE slug = 'zeevi-weiss'").bind(JSON.stringify(settings)).run();
-
-    const sent: { url: string; body: Record<string, unknown>; headers: Headers }[] = [];
+  /** מיילים שנשלחו ל-Resend בבדיקה */
+  function captureEmails() {
+    const sent: { body: Record<string, unknown>; headers: Headers }[] = [];
     const realFetch = globalThis.fetch;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.startsWith("https://api.resend.com/")) {
-        sent.push({ url, body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
+        sent.push({ body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
         return Response.json({ id: "email_1" });
       }
       return realFetch(input, init);
     });
+    return sent;
+  }
 
-    const base = { ApiPhone: "0505555555", ApiCallId: "call-6", product: "m1", name: "ייעוץ טלפוני", type: "phone_meeting", price: "250" };
-    expect((await ivr("product", base)).body).toContain("t-לרכישת ייעוץ טלפוני.t-במחיר.n-250");
+  beforeAll(async () => {
+    await DB.prepare("INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('resend_api_key', 're_test_123456789')").run();
+    const settings = { enabled: true, from_name: "זאבי וייס", from_email: "office@example.com", recipients: "owner@example.com" };
+    await DB.prepare("UPDATE tenants SET email_settings = ? WHERE slug = 'zeevi-weiss'").bind(JSON.stringify(settings)).run();
+  });
+  afterAll(async () => {
+    await DB.prepare("UPDATE tenants SET email_settings = NULL WHERE slug = 'zeevi-weiss'").run();
+  });
+
+  it("by default takes the calling number without asking, says the product's own text, and emails a tidy summary", async () => {
+    const sent = captureEmails();
+    const base = { ApiPhone: "0505555555", ApiCallId: "call-6", product: "m1", name: "פגישת ייעוץ", price: "250" };
+    expect((await ivr("product", base)).body).toContain("t-לרכישת פגישת ייעוץ.t-במחיר.n-250.t-שקלים.t-הקישו 1 ליציאה הקישו 2=yp_menu");
+    await DB.prepare("UPDATE zeevi_weiss_products SET success_text = ?, email_subject = ? WHERE ivr_code = 'm1'")
+      .bind("הפגישה נקבעה בהצלחה, ניצור איתך קשר", "נקבעה {item} מ-{buyer_phone}")
+      .run();
+
+    // אין שאלת טלפון: ישר לסליקה
+    expect((await ivr("product", { ...base, yp_menu: "1" })).body).toBe(`credit_card=nedarim_plus,250,,1,1,,,${MOSAD},,,,,,,GoBack`);
+    const r = await ivr("product", { ...base, yp_menu: "1", CreditCard_CODE: "OK" });
+    expect(r.body).toBe("id_list_message=t-הפגישה נקבעה בהצלחה ניצור איתך קשר&go_to_folder=/");
+    expect(await DB.prepare("SELECT status, contact_phone FROM zeevi_weiss_orders ORDER BY id DESC LIMIT 1").first()).toEqual({ status: "paid", contact_phone: "0505555555" });
+
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toMatchObject({ from: "זאבי וייס <office@example.com>", to: ["owner@example.com"], subject: "נקבעה פגישת ייעוץ מ-0505555555" });
+    expect(String(sent[0]!.body.text)).toContain("טלפון ליצירת קשר: 0505555555");
+    expect(String(sent[0]!.body.html)).toContain("פרטי הרכישה");
+    expect(sent[0]!.headers.get("authorization")).toBe("Bearer re_test_123456789");
+  });
+
+  it("asks for a contact number when the product allows another phone", async () => {
+    const sent = captureEmails();
+    await DB.prepare("UPDATE zeevi_weiss_products SET ask_phone = 1, send_email = 0 WHERE ivr_code = 'm1'").run();
+    const base = { ApiPhone: "0505555555", ApiCallId: "call-7", product: "m1" };
     let r = await ivr("product", { ...base, yp_menu: "1" });
-    expect(r.body).toContain("=yp_contact_1,");
+    expect(r.body).toContain("t-ליצירת קשר במספר שממנו התקשרתם הקישו 1 וסולמית למספר אחר הקישו את המספר וסולמית=yp_contact_1,");
     r = await ivr("product", { ...base, yp_menu: "1", yp_contact_1: "0506666666" });
-    expect(r.body).toContain("=yp_contactc_1,");
+    expect(r.body).toContain("t-הקשתם.d-0506666666.t-לאישור הקישו 1 להקשה מחדש הקישו 2=yp_contactc_1,");
     const buy = { ...base, yp_menu: "1", yp_contact_1: "0506666666", yp_contactc_1: "1" };
     expect((await ivr("product", buy)).body).toBe(`credit_card=nedarim_plus,250,,1,1,,,${MOSAD},,,,,,,GoBack`);
-    r = await ivr("product", { ...buy, CreditCard_CODE: "OK" });
-    expect(r.body).toBe("id_list_message=t-הפגישה טלפונית נרכשה בהצלחה.t-ניצור איתך קשר לתיאום המועד&go_to_folder=/");
+    await ivr("product", { ...buy, CreditCard_CODE: "OK" });
+    expect(await DB.prepare("SELECT contact_phone FROM zeevi_weiss_orders ORDER BY id DESC LIMIT 1").first()).toEqual({ contact_phone: "0506666666" });
+    // במוצר הזה כובה המייל
+    await new Promise((res) => setTimeout(res, 50));
+    expect(sent).toHaveLength(0);
+  });
+});
 
-    expect(await DB.prepare("SELECT status, contact_phone FROM zeevi_weiss_orders ORDER BY id DESC LIMIT 1").first()).toEqual({ status: "paid", contact_phone: "0506666666" });
-    await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(sent[0]!.body).toMatchObject({ from: "זאבי וייס <office@example.com>", to: ["owner@example.com"], subject: "פגישה טלפונית חדשה: ייעוץ טלפוני" });
-    expect(String(sent[0]!.body.text)).toContain("טלפון לתיאום: 0506666666");
-    expect(sent[0]!.headers.get("authorization")).toBe("Bearer re_test_123456789");
+describe("course without choosing another phone", () => {
+  it("uses the calling number as the first phone and goes straight to payment", async () => {
+    await ivr("course", { ApiPhone: "0507777777", course: "solo", name: "קורס יחיד", price: "40" });
+    await DB.prepare("UPDATE zeevi_weiss_courses SET ask_phone = 0, max_phones = 1 WHERE ivr_code = 'solo'").run();
+    const base = { ApiPhone: "0507777777", ApiCallId: "call-solo", course: "solo" };
+    expect((await ivr("course", { ...base, yp_menu: "1" })).body).toBe(`credit_card=nedarim_plus,40,,1,1,,,${MOSAD},,,,,,,GoBack`);
+    await ivr("course", { ...base, yp_menu: "1", CreditCard_CODE: "OK" });
+    expect(await check("0507777777", "solo")).toBe("OK");
+  });
+});
+
+describe("custom texts", () => {
+  it("says the client's own texts, and a course's own offer text", async () => {
+    await DB.prepare("UPDATE tenants SET ivr_texts = ? WHERE slug = 'zeevi-weiss'")
+      .bind(JSON.stringify({ course_no_sub: "שלום, עדיין לא נרשמת ל{name}" }))
+      .run();
+    await ivr("course", { ApiPhone: "0508888888", course: "txt", name: "הלכה", price: "30" });
+    await DB.prepare("UPDATE zeevi_weiss_courses SET offer_text = ? WHERE ivr_code = 'txt'").bind("להרשמה {price} הקישו 1").run();
+    const r = await ivr("course", { ApiPhone: "0508888888", course: "txt" });
+    expect(r.body).toContain("read=t-שלום עדיין לא נרשמת להלכה.t-להרשמה.t-במחיר.n-30.t-שקלים.t-הקישו 1=yp_menu");
+    await DB.prepare("UPDATE tenants SET ivr_texts = NULL WHERE slug = 'zeevi-weiss'").run();
   });
 });

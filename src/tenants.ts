@@ -21,6 +21,8 @@ export interface TenantConfig {
   notes: string | null;
   /** הגדרות מייל (JSON) - ראו email.ts */
   email_settings: string | null;
+  /** טקסטים בשיחה ששונו (JSON) - ראו ivr/texts.ts */
+  ivr_texts: string | null;
   is_active: number;
   created_at: string;
 }
@@ -37,9 +39,12 @@ export function generateKey(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function ensureColumn(db: D1Database, table: string, column: string, ddl: string): Promise<void> {
+/** מוסיף עמודה אם אינה קיימת. מחזיר true אם נוספה עכשיו. */
+async function ensureColumn(db: D1Database, table: string, column: string, ddl: string): Promise<boolean> {
   const exists = await db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ?").bind(table, column).first();
-  if (!exists) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`).run();
+  if (exists) return false;
+  await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`).run();
+  return true;
 }
 
 function toConfig(row: TenantConfig): TenantConfig {
@@ -97,6 +102,7 @@ export async function setup(env: Env): Promise<void> {
 
   await ensureColumn(db, "tenants", "client_number", "INTEGER");
   await ensureColumn(db, "tenants", "email_settings", "TEXT");
+  await ensureColumn(db, "tenants", "ivr_texts", "TEXT");
   await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_client_number ON tenants(client_number)").run();
   // מספר לקוח לכל מי שעדיין אין לו (זאבי וייס מקבל 1)
   while (await db.prepare("SELECT 1 FROM tenants WHERE client_number IS NULL").first()) {
@@ -133,6 +139,7 @@ export async function setup(env: Env): Promise<void> {
     await ensureColumn(db, table, "access_days", "INTEGER");
     // מה קורה למי שכבר רכש כשהקורס לא פעיל: keep = ממשיך לקבל גישה, block = נחסם (ושומע הסבר)
     await ensureColumn(db, table, "on_inactive", "TEXT NOT NULL DEFAULT 'keep'");
+    await migrateItemSettings(db, tenant);
 
     // בטבלה המקורית מותרים רק 2 טלפונים (slot IN (1,2)). בונים אותה מחדש בלי ההגבלה, עם כל הנתונים.
     const phones = `${tenant.prefix}subscription_phones`;
@@ -147,6 +154,48 @@ export async function setup(env: Env): Promise<void> {
         db.prepare(`ALTER TABLE ${tmp} RENAME TO ${phones}`),
         db.prepare(`CREATE INDEX IF NOT EXISTS idx_${tenant.prefix}sub_phones_phone ON ${phones}(phone)`),
       ]);
+    }
+  }
+}
+
+/**
+ * הגדרות לכל קורס ומוצר: טקסטים משלו, האם אפשר לבחור טלפון אחר, ומה קורה אחרי רכישה (מייל).
+ * כשהעמודות נוספות בפעם הראשונה, ממירים את ההגדרות הישנות (סוג מוצר, מייל לפי סוג אירוע).
+ */
+async function migrateItemSettings(db: D1Database, tenant: TenantConfig): Promise<void> {
+  const courses = `${tenant.prefix}courses`;
+  const products = `${tenant.prefix}products`;
+  for (const table of [courses, products]) {
+    for (const col of ["offer_text", "success_text", "email_to", "email_subject", "email_body"]) await ensureColumn(db, table, col, "TEXT");
+  }
+  // בקורס: עד עכשיו תמיד אפשר היה לבחור טלפון אחר. במוצר: ברירת המחדל - רק המספר שממנו התקשרו
+  await ensureColumn(db, courses, "ask_phone", "INTEGER NOT NULL DEFAULT 1");
+  if (await ensureColumn(db, products, "ask_phone", "INTEGER NOT NULL DEFAULT 0")) {
+    await db.prepare(`UPDATE ${products} SET ask_phone = 1 WHERE type = 'phone_meeting'`).run();
+    await db
+      .prepare(`UPDATE ${products} SET success_text = CASE type WHEN 'meeting' THEN ?1 ELSE ?2 END WHERE type IN ('meeting','phone_meeting') AND success_text IS NULL`)
+      .bind("הפגישה נרכשה בהצלחה, ניצור איתך קשר לתיאום המועד", "הפגישה הטלפונית נרכשה בהצלחה, ניצור איתך קשר לתיאום המועד")
+      .run();
+  }
+
+  // מייל: בגרסה הקודמת נשלח לפי סוג (פגישות כן, מוצרים וקורסים לא - אלא אם הופעל)
+  type OldEvents = Record<string, { enabled?: boolean; recipients?: string } | undefined>;
+  let events: OldEvents | null = null;
+  try {
+    events = (JSON.parse(tenant.email_settings ?? "{}") as { events?: OldEvents }).events ?? null;
+  } catch {
+    events = null;
+  }
+  const was = (key: string, fallback: boolean) => (events?.[key]?.enabled ?? fallback ? 1 : 0);
+  if (await ensureColumn(db, courses, "send_email", "INTEGER NOT NULL DEFAULT 1")) {
+    await db.prepare(`UPDATE ${courses} SET send_email = ?, email_to = NULLIF(?, '')`).bind(was("course", false), events?.course?.recipients ?? "").run();
+  }
+  if (await ensureColumn(db, products, "send_email", "INTEGER NOT NULL DEFAULT 1")) {
+    for (const [type, fallback] of [["product", false], ["meeting", true], ["phone_meeting", true]] as const) {
+      await db
+        .prepare(`UPDATE ${products} SET send_email = ?, email_to = NULLIF(?, '') WHERE type = ?`)
+        .bind(was(type, fallback), events?.[type]?.recipients ?? "", type)
+        .run();
     }
   }
 }
@@ -215,7 +264,7 @@ export async function createTenant(db: D1Database, input: TenantInput): Promise<
   return (await getTenant(db, input.slug))!;
 }
 
-const EDITABLE = ["title", "client_number", "nedarim_mosad_id", "contact_name", "contact_phone", "notes", "is_active", "email_settings"] as const;
+const EDITABLE = ["title", "client_number", "nedarim_mosad_id", "contact_name", "contact_phone", "notes", "is_active", "email_settings", "ivr_texts"] as const;
 
 export async function updateTenant(db: D1Database, slug: string, values: Partial<Record<(typeof EDITABLE)[number], string | number | null>>): Promise<boolean> {
   const cols = EDITABLE.filter((c) => c in values);

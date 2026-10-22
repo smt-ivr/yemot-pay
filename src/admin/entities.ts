@@ -2,7 +2,7 @@ import type { Tables } from "../db/tables";
 
 export type EntityName = "courses" | "products" | "customers" | "subscriptions" | "orders" | "payments" | "ivr_log";
 
-export type FieldType = "text" | "longtext" | "phone" | "int" | "real" | "bool" | "enum" | "date" | "datetime" | "ref";
+export type FieldType = "text" | "longtext" | "phone" | "emails" | "int" | "real" | "bool" | "enum" | "date" | "datetime" | "ref";
 
 export interface Field {
   name: string;
@@ -16,6 +16,12 @@ export interface Field {
   default?: string;
   /** לא מוצג בטבלה, רק בטופס */
   formOnly?: boolean;
+  /** לא מוצג בטופס בכלל (ערך קבוע מ-default) */
+  hidden?: boolean;
+  /** כותרת קבוצה בטופס - מתחילה מהשדה הזה */
+  section?: string;
+  /** טקסט שיוצג בשדה ריק (למשל ברירת המחדל) */
+  placeholder?: string;
   help?: string;
 }
 
@@ -71,11 +77,44 @@ const PAYMENT_STATUS = [
   { value: "refunded", label: "הוחזר" },
 ];
 
-const PRODUCT_TYPES = [
-  { value: "product", label: "מוצר" },
-  { value: "meeting", label: "פגישה" },
-  { value: "phone_meeting", label: "פגישה טלפונית" },
-];
+/** הגדרות שיש גם לקורס וגם למוצר: טקסטים בשיחה ומה קורה אחרי רכישה */
+function itemFields(kind: "course" | "product"): Field[] {
+  const success = kind === "course" ? "רכשת בהצלחה את הקורס {name}" : "רכשת בהצלחה את {name}";
+  return [
+    {
+      name: "offer_text",
+      label: "טקסט ההצעה",
+      type: "longtext",
+      section: "מה המתקשר שומע",
+      placeholder: kind === "course" ? "לרכישת גישה לקורס {duration} {price} הקישו 1, ליציאה הקישו 2" : "לרכישת {name} {price} הקישו 1, ליציאה הקישו 2",
+      help:
+        kind === "course"
+          ? "ריק = הטקסט הכללי (הגדרות ← טקסטים בשיחה). משתנים: {name} השם, {duration} התוקף, {price} המחיר"
+          : "ריק = הטקסט הכללי (הגדרות ← טקסטים בשיחה). משתנים: {name} השם, {price} המחיר",
+    },
+    {
+      name: "success_text",
+      label: "טקסט אחרי רכישה מוצלחת",
+      type: "longtext",
+      placeholder: success,
+      help: kind === "course" ? "ריק = הטקסט הכללי. משתנה: {name}. אחריו מושמע התוקף, אם יש" : "למשל: הפגישה נקבעה בהצלחה, ניצור איתך קשר בהקדם. משתנה: {name}",
+    },
+    {
+      name: "ask_phone",
+      label: "לאפשר לבחור טלפון אחר",
+      type: "bool",
+      default: kind === "course" ? "1" : "0",
+      help:
+        kind === "course"
+          ? "כבוי = הטלפון הראשון הוא המספר שממנו התקשרו, בלי לשאול. דלוק = 1 וסולמית למספר המתקשר, או הקשת מספר אחר"
+          : "כבוי = נרשם המספר שממנו התקשרו, בלי לשאול. דלוק = המתקשר יכול להקיש מספר אחר ליצירת קשר",
+    },
+    { name: "send_email", label: "לשלוח מייל אחרי רכישה", type: "bool", default: "1", section: "אחרי הרכישה", help: "נשלח לנמענים שבהגדרות ← מיילים (אם המיילים מופעלים שם)" },
+    { name: "email_to", label: "נמענים נוספים רק לזה", type: "emails", formOnly: true, help: "כתובות מופרדות בפסיק, בנוסף לנמענים הכלליים" },
+    { name: "email_subject", label: "נושא המייל", type: "text", formOnly: true, placeholder: "ריק = הנושא הכללי", help: "משתנים: {item} {price} {buyer_phone} {phones} {date} {time} {reference}" },
+    { name: "email_body", label: "תוכן המייל", type: "longtext", formOnly: true, placeholder: "ריק = התוכן הכללי. טבלת פרטי הרכישה מתווספת אוטומטית" },
+  ];
+}
 
 export const ENTITIES: Record<EntityName, Entity> = {
   courses: {
@@ -98,7 +137,8 @@ export const ENTITIES: Record<EntityName, Entity> = {
           { value: "block", label: "נחסם, ושומע שהקורס אינו פעיל" },
         ],
       },
-      { name: "description", label: "תיאור", type: "longtext", formOnly: true },
+      { name: "description", label: "תיאור (פנימי)", type: "longtext", formOnly: true },
+      ...itemFields("course"),
     ],
     columns: [
       { name: "id", label: "#" },
@@ -107,6 +147,7 @@ export const ENTITIES: Record<EntityName, Entity> = {
       { name: "price", label: "מחיר" },
       { name: "access_days", label: "תוקף (ימים)" },
       { name: "max_phones", label: "טלפונים" },
+      { name: "send_email", label: "מייל" },
       { name: "is_active", label: "פעיל" },
       { name: "active_count", label: "מנויים פעילים" },
     ],
@@ -118,29 +159,30 @@ export const ENTITIES: Record<EntityName, Entity> = {
   },
 
   products: {
-    label: "מוצרים ופגישות",
+    label: "מוצרים",
     table: "products",
     fields: [
-      { name: "type", label: "סוג", type: "enum", required: true, options: PRODUCT_TYPES },
-      { name: "name", label: "שם", type: "text", required: true },
-      { name: "ivr_code", label: "מזהה מוצר", type: "text", help: "מספר או מילה באנגלית (למשל 1 או meeting). זה מה שכותבים בכתובת בימות: product=המזהה" },
+      // הסוג נשאר במסד מהגרסה הקודמת. היום כל המוצרים זהים - ההבדל רק בטקסטים
+      { name: "type", label: "סוג", type: "enum", hidden: true, default: "product", options: [{ value: "product", label: "מוצר" }, { value: "meeting", label: "פגישה" }, { value: "phone_meeting", label: "פגישה טלפונית" }] },
+      { name: "name", label: "שם", type: "text", required: true, help: "מה שהמתקשר שומע, למשל: פגישת ייעוץ, ספר, שיעור פרטי" },
+      { name: "ivr_code", label: "מזהה מוצר", type: "text", help: "מספר או מילה באנגלית (למשל 1 או meeting). בימות: api_add_1=product=המזהה" },
       { name: "price", label: "מחיר", type: "real", required: true, help: "0 = ללא תשלום (לבדיקות): נרכש מיד, בלי סליקה" },
-      { name: "duration_minutes", label: "משך (דקות)", type: "int" },
-      yesNo("is_active", "פעיל"),
-      { name: "description", label: "תיאור", type: "longtext", formOnly: true },
+      yesNo("is_active", "פעיל (פתוח לרכישה)"),
+      { name: "description", label: "תיאור (פנימי)", type: "longtext", formOnly: true },
+      ...itemFields("product"),
     ],
     columns: [
       { name: "id", label: "#" },
-      { name: "type", label: "סוג" },
       { name: "name", label: "שם" },
       { name: "ivr_code", label: "מזהה מוצר" },
       { name: "price", label: "מחיר" },
-      { name: "duration_minutes", label: "משך" },
+      { name: "ask_phone", label: "טלפון אחר" },
+      { name: "send_email", label: "מייל" },
       { name: "is_active", label: "פעיל" },
     ],
     select: (t) => `SELECT x.* FROM ${t.products} x`,
     search: () => ["x.name LIKE ?", "x.ivr_code LIKE ?"],
-    filters: ["type", "is_active"],
+    filters: ["is_active"],
     deletable: true,
   },
 

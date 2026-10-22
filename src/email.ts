@@ -1,103 +1,94 @@
 import type { TenantDb } from "./db/repo";
+import type { ItemSettings } from "./db/types";
 import { getSetting } from "./platform";
-
-/** האירועים שאפשר לשלוח עליהם מייל */
-export type EmailEvent = "meeting" | "phone_meeting" | "product" | "course";
-
-export const EMAIL_EVENTS: { key: EmailEvent; label: string }[] = [
-  { key: "meeting", label: "נרכשה פגישה" },
-  { key: "phone_meeting", label: "נרכשה פגישה טלפונית" },
-  { key: "product", label: "נרכש מוצר" },
-  { key: "course", label: "נרכש קורס" },
-];
 
 /** משתנים שאפשר לשים בנושא ובתוכן: {name} */
 export const PLACEHOLDERS: { key: string; label: string }[] = [
-  { key: "client", label: "שם העסק" },
-  { key: "product", label: "שם המוצר / הפגישה" },
-  { key: "course", label: "שם הקורס" },
+  { key: "item", label: "מה נרכש (שם הקורס / המוצר)" },
+  { key: "kind", label: "סוג (קורס / מוצר)" },
   { key: "price", label: "מחיר" },
   { key: "buyer_phone", label: "הטלפון שממנו התקשרו" },
-  { key: "contact_phone", label: "טלפון לתיאום (בפגישה טלפונית)" },
-  { key: "phones", label: "הטלפונים שקיבלו גישה לקורס" },
+  { key: "phones", label: "טלפונים (עם גישה לקורס / ליצירת קשר)" },
   { key: "validity", label: "תוקף הגישה" },
   { key: "date", label: "תאריך" },
   { key: "time", label: "שעה" },
-  { key: "reference", label: "מספר הזמנה / מנוי" },
+  { key: "reference", label: "מספר אסמכתא" },
+  { key: "client", label: "שם העסק" },
 ];
 
-export interface EventTemplate {
-  enabled: boolean;
-  /** נמענים נוספים לאירוע הזה בלבד (בנוסף לנמענים הכלליים) */
-  recipients: string;
-  subject: string;
-  body: string;
-}
-
 export interface EmailSettings {
+  /** מתג ראשי: בלי זה לא נשלח שום מייל */
+  enabled: boolean;
   from_name: string;
   /** כתובת השולח - חייבת להיות בדומיין שמאומת ב-Resend */
   from_email: string;
   reply_to: string;
   /** נמענים לכל ההתראות, מופרדים בפסיק */
   recipients: string;
-  events: Record<EmailEvent, EventTemplate>;
+  /** תבנית ברירת המחדל לכל רכישה (קורס או מוצר יכולים להגדיר משלהם) */
+  subject: string;
+  body: string;
+  /** להוסיף למייל טבלה מסודרת עם פרטי הרכישה */
+  show_details: boolean;
 }
 
-const SIGNATURE = "\n\nנשלח אוטומטית ממערכת הרכישות הטלפונית של {client}.";
-
 export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
+  enabled: true,
   from_name: "",
   from_email: "",
   reply_to: "",
   recipients: "",
-  events: {
-    meeting: {
-      enabled: true,
-      recipients: "",
-      subject: "פגישה חדשה: {product}",
-      body: "שלום,\n\nנרכשה פגישה חדשה בטלפון.\n\nפגישה: {product}\nמחיר: {price}\nטלפון הרוכש: {buyer_phone}\nמועד הרכישה: {date} בשעה {time}\nמספר הזמנה: {reference}\n\nיש ליצור קשר עם הרוכש לתיאום מועד." + SIGNATURE,
-    },
-    phone_meeting: {
-      enabled: true,
-      recipients: "",
-      subject: "פגישה טלפונית חדשה: {product}",
-      body: "שלום,\n\nנרכשה פגישה טלפונית חדשה.\n\nפגישה: {product}\nמחיר: {price}\nטלפון לתיאום: {contact_phone}\nהטלפון שממנו התקשרו: {buyer_phone}\nמועד הרכישה: {date} בשעה {time}\nמספר הזמנה: {reference}\n\nיש לחזור לרוכש לתיאום מועד." + SIGNATURE,
-    },
-    product: {
-      enabled: false,
-      recipients: "",
-      subject: "רכישה חדשה: {product}",
-      body: "שלום,\n\nנרכש מוצר בטלפון.\n\nמוצר: {product}\nמחיר: {price}\nטלפון הרוכש: {buyer_phone}\nמועד הרכישה: {date} בשעה {time}\nמספר הזמנה: {reference}" + SIGNATURE,
-    },
-    course: {
-      enabled: false,
-      recipients: "",
-      subject: "מנוי חדש לקורס {course}",
-      body: "שלום,\n\nנרכש מנוי לקורס בטלפון.\n\nקורס: {course}\nמחיר: {price}\nתוקף: {validity}\nטלפונים עם גישה: {phones}\nהטלפון שממנו התקשרו: {buyer_phone}\nמועד הרכישה: {date} בשעה {time}\nמספר מנוי: {reference}" + SIGNATURE,
-    },
-  },
+  subject: "רכישה חדשה: {item}",
+  body: "שלום,\n\nהתקבלה רכישה חדשה בטלפון של {item}.",
+  show_details: true,
 };
+
+/** פרטי רכישה שנשלחים במייל */
+export interface PurchaseVars {
+  kind: "course" | "product";
+  item: string;
+  price: string;
+  buyer_phone: string;
+  /** בקורס: הטלפונים שקיבלו גישה. במוצר: הטלפון ליצירת קשר */
+  phones: string;
+  validity?: string;
+  reference: string;
+}
+
+const KIND_LABEL = { course: "קורס", product: "מוצר" } as const;
 
 const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 
-export function splitEmails(list: string): string[] {
-  return list
+export function splitEmails(list: string | null | undefined): string[] {
+  return (list ?? "")
     .split(/[,;\s]+/)
     .map((e) => e.trim())
     .filter(Boolean);
 }
 
+/** מחזיר את הכתובת הראשונה שאינה תקינה, או null */
+export function invalidEmail(list: string | null | undefined): string | null {
+  return splitEmails(list).find((e) => !EMAIL_RE.test(e)) ?? null;
+}
+
 export function parseEmailSettings(raw: string | null): EmailSettings {
-  let saved: Partial<EmailSettings> = {};
+  let saved: Record<string, unknown> = {};
   try {
-    saved = raw ? (JSON.parse(raw) as Partial<EmailSettings>) : {};
+    saved = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
   } catch {
     saved = {};
   }
-  const events = { ...DEFAULT_EMAIL_SETTINGS.events };
-  for (const { key } of EMAIL_EVENTS) events[key] = { ...DEFAULT_EMAIL_SETTINGS.events[key], ...(saved.events?.[key] ?? {}) };
-  return { ...DEFAULT_EMAIL_SETTINGS, ...saved, events };
+  const settings: EmailSettings = { ...DEFAULT_EMAIL_SETTINGS };
+  for (const key of ["from_name", "from_email", "reply_to", "recipients", "subject", "body"] as const) {
+    if (typeof saved[key] === "string" && (saved[key] as string).trim()) settings[key] = saved[key] as string;
+  }
+  if (typeof saved.enabled === "boolean") settings.enabled = saved.enabled;
+  else if (saved.events && typeof saved.events === "object") {
+    // הגדרות מהגרסה הקודמת (מייל לפי סוג אירוע): פעיל אם אחד האירועים היה פעיל
+    settings.enabled = Object.values(saved.events as Record<string, { enabled?: boolean }>).some((e) => e?.enabled);
+  }
+  if (typeof saved.show_details === "boolean") settings.show_details = saved.show_details;
+  return settings;
 }
 
 /** בדיקת הגדרות שהגיעו ממערכת הניהול. מחזיר הגדרות נקיות או שגיאה בעברית. */
@@ -105,51 +96,118 @@ export function validateEmailSettings(input: unknown): { settings: EmailSettings
   if (!input || typeof input !== "object") return { error: "הגדרות לא תקינות" };
   const body = input as Record<string, unknown>;
   const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
-  const settings = parseEmailSettings(null);
-  settings.from_name = str(body.from_name, 100);
-  settings.from_email = str(body.from_email, 200);
-  settings.reply_to = str(body.reply_to, 200);
-  settings.recipients = str(body.recipients, 1000);
-
+  const settings: EmailSettings = {
+    enabled: body.enabled !== false,
+    from_name: str(body.from_name, 100),
+    from_email: str(body.from_email, 200),
+    reply_to: str(body.reply_to, 200),
+    recipients: str(body.recipients, 1000),
+    subject: str(body.subject, 200) || DEFAULT_EMAIL_SETTINGS.subject,
+    body: str(body.body, 5000) || DEFAULT_EMAIL_SETTINGS.body,
+    show_details: body.show_details !== false,
+  };
   if (settings.from_email && !EMAIL_RE.test(settings.from_email)) return { error: "כתובת השולח אינה תקינה" };
   if (settings.reply_to && !EMAIL_RE.test(settings.reply_to)) return { error: "כתובת המענה אינה תקינה" };
-  for (const e of splitEmails(settings.recipients)) if (!EMAIL_RE.test(e)) return { error: `כתובת נמען לא תקינה: ${e}` };
-
-  const events = (body.events ?? {}) as Record<string, Record<string, unknown>>;
-  for (const { key, label } of EMAIL_EVENTS) {
-    const e = events[key] ?? {};
-    const t: EventTemplate = {
-      enabled: e.enabled === true,
-      recipients: str(e.recipients, 1000),
-      subject: str(e.subject, 200) || DEFAULT_EMAIL_SETTINGS.events[key].subject,
-      body: str(e.body, 5000) || DEFAULT_EMAIL_SETTINGS.events[key].body,
-    };
-    for (const r of splitEmails(t.recipients)) if (!EMAIL_RE.test(r)) return { error: `כתובת נמען לא תקינה ב"${label}": ${r}` };
-    settings.events[key] = t;
-  }
+  const bad = invalidEmail(settings.recipients);
+  if (bad) return { error: `כתובת נמען לא תקינה: ${bad}` };
   return { settings };
 }
 
 export function renderTemplate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? vars[k]! : m));
+  return template.replace(/\{(\w+)\}/g, (m, k: string) => (Object.hasOwn(vars, k) ? vars[k]! : m));
 }
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
-export function emailHtml(title: string, body: string): string {
-  const paragraphs = escapeHtml(body)
+export function israelDateTime(now = new Date()): { date: string; time: string } {
+  const date = new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", year: "numeric" }).format(now);
+  const time = new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
+  return { date, time };
+}
+
+/** שורות טבלת פרטי הרכישה */
+function detailRows(v: Record<string, string>, kind: PurchaseVars["kind"]): [string, string][] {
+  const rows: [string, string][] = [
+    [KIND_LABEL[kind], v.item ?? ""],
+    ["מחיר", v.price ?? ""],
+    ["טלפון הרוכש", v.buyer_phone ?? ""],
+    [kind === "course" ? "טלפונים עם גישה" : "טלפון ליצירת קשר", v.phones ?? ""],
+  ];
+  if (kind === "course") rows.push(["תוקף", v.validity ?? ""]);
+  rows.push(["מועד הרכישה", `${v.date} בשעה ${v.time}`], ["מספר אסמכתא", v.reference ?? ""]);
+  return rows.filter(([, value]) => value.trim() !== "");
+}
+
+/** עיצוב המייל: כותרת עם שם העסק, הטקסט החופשי, טבלת פרטים, ושורת סיום. */
+export function emailHtml(o: { client: string; subject: string; body: string; details: [string, string][] | null }): string {
+  const paragraphs = escapeHtml(o.body)
     .split(/\n{2,}/)
+    .filter((p) => p.trim())
     .map((p) => `<p style="margin:0 0 14px">${p.replace(/\n/g, "<br>")}</p>`)
     .join("");
-  return `<!doctype html><html lang="he" dir="rtl"><body style="margin:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:24px 0"><tr><td align="center">
-<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e8f0">
-<tr><td style="background:#4f46e5;color:#ffffff;padding:18px 24px;font-size:18px;font-weight:bold;text-align:right">${escapeHtml(title)}</td></tr>
-<tr><td style="padding:24px;color:#1f2937;font-size:15px;line-height:1.7;text-align:right;direction:rtl">${paragraphs}</td></tr>
+  const details = o.details?.length
+    ? `<tr><td style="padding:4px 32px 28px">
+<div style="font-size:13px;font-weight:bold;color:#6366f1;margin:0 0 10px">פרטי הרכישה</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden">
+${o.details
+  .map(
+    ([k, v], i) =>
+      `<tr><td style="padding:11px 16px;background:${i % 2 ? "#ffffff" : "#f8fafc"};color:#64748b;font-size:14px;width:38%;text-align:right">${escapeHtml(k)}</td><td style="padding:11px 16px;background:${i % 2 ? "#ffffff" : "#f8fafc"};color:#0f172a;font-size:14px;font-weight:bold;text-align:right">${escapeHtml(v)}</td></tr>`,
+  )
+  .join("\n")}
+</table></td></tr>`
+    : "";
+  return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;direction:rtl">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:28px 12px"><tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,.06)">
+<tr><td style="background:#4f46e5;background-image:linear-gradient(135deg,#4f46e5,#7c3aed);padding:26px 32px;text-align:right">
+<div style="color:#c7d2fe;font-size:13px;font-weight:bold;margin:0 0 6px">${escapeHtml(o.client)}</div>
+<div style="color:#ffffff;font-size:22px;font-weight:bold;line-height:1.35">${escapeHtml(o.subject)}</div>
+</td></tr>
+<tr><td style="padding:28px 32px 10px;color:#1e293b;font-size:15px;line-height:1.75;text-align:right">${paragraphs}</td></tr>
+${details}
+<tr><td style="padding:16px 32px;background:#f8fafc;border-top:1px solid #eef2f7;color:#94a3b8;font-size:12px;text-align:right">נשלח אוטומטית ממערכת הרכישות הטלפונית של ${escapeHtml(o.client)}</td></tr>
 </table></td></tr></table></body></html>`;
 }
+
+export interface BuiltEmail {
+  subject: string;
+  html: string;
+  text: string;
+}
+
+/** בונה את המייל לרכישה: התבנית של הפריט אם הוגדרה, אחרת התבנית הכללית. */
+export function buildEmail(client: string, settings: EmailSettings, item: ItemSettings, purchase: PurchaseVars, opts: { test?: boolean; now?: Date } = {}): BuiltEmail {
+  const vars: Record<string, string> = {
+    client,
+    ...israelDateTime(opts.now),
+    ...purchase,
+    validity: purchase.validity ?? "",
+    kind: KIND_LABEL[purchase.kind],
+    // שמות מהגרסה הקודמת, כדי שתבניות ישנות ימשיכו לעבוד
+    product: purchase.item,
+    course: purchase.item,
+    contact_phone: purchase.phones,
+  };
+  const subject = (opts.test ? "[בדיקה] " : "") + renderTemplate(item.email_subject?.trim() || settings.subject, vars);
+  const body = renderTemplate(item.email_body?.trim() || settings.body, vars);
+  const details = settings.show_details ? detailRows(vars, purchase.kind) : null;
+  const text = [body, ...(details ? ["", ...details.map(([k, v]) => `${k}: ${v}`)] : []), "", `נשלח אוטומטית ממערכת הרכישות הטלפונית של ${client}`].join("\n");
+  return { subject, html: emailHtml({ client, subject, body, details }), text };
+}
+
+export const SAMPLE_PURCHASE: PurchaseVars = {
+  kind: "course",
+  item: "גמרא עיון",
+  price: "250 ₪",
+  buyer_phone: "0501234567",
+  phones: "0501234567, 0527654321",
+  validity: "365 ימים",
+  reference: "1234",
+};
 
 export interface SendResult {
   ok: boolean;
@@ -181,57 +239,40 @@ export async function sendEmail(
   return { ok: true, id: data.id };
 }
 
-export function israelDateTime(now = new Date()): { date: string; time: string } {
-  const date = new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", year: "numeric" }).format(now);
-  const time = new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
-  return { date, time };
-}
-
 /**
- * שולח מייל על אירוע לפי הגדרות הלקוח. לא זורק שגיאות - התוצאה נרשמת ביומן.
- * test=true: שליחת בדיקה גם אם האירוע כבוי.
+ * שולח מייל על רכישה לפי ההגדרות הכלליות וההגדרות של הקורס / המוצר. לא זורק שגיאות - התוצאה נרשמת ביומן.
+ * test=true: שליחת בדיקה גם אם המיילים כבויים.
  */
 export async function notify(
   db: TenantDb,
-  event: EmailEvent,
-  vars: Record<string, string>,
+  item: ItemSettings,
+  purchase: PurchaseVars,
   opts: { idempotencyKey?: string; test?: boolean; overrideTo?: string[] } = {},
 ): Promise<SendResult> {
   const settings = parseEmailSettings(db.tenant.email_settings);
-  const tpl = settings.events[event];
-  const fail = async (error: string): Promise<SendResult> => {
-    if (!opts.test) await db.log("system", null, "email_skipped", { event, reason: error }).catch(() => {});
+  const skip = async (error: string, log = true): Promise<SendResult> => {
+    if (log && !opts.test) await db.log("system", null, "email_skipped", { item: purchase.item, reason: error }).catch(() => {});
     return { ok: false, error };
   };
-  if (!tpl.enabled && !opts.test) return { ok: false, error: "האירוע כבוי" };
+  if (!opts.test && (!settings.enabled || item.send_email === 0)) return skip("שליחת מייל כבויה", false);
 
   const apiKey = await getSetting(db.db, "resend_api_key");
-  if (!apiKey) return fail("לא הוגדר מפתח Resend (הגדרות מערכת)");
-  if (!settings.from_email) return fail("לא הוגדרה כתובת שולח");
-  const to = opts.overrideTo ?? [...new Set([...splitEmails(settings.recipients), ...splitEmails(tpl.recipients)])];
-  if (to.length === 0) return fail("לא הוגדרו נמענים");
+  if (!apiKey) return skip("לא הוגדר מפתח Resend (הגדרות מערכת)");
+  if (!settings.from_email) return skip("לא הוגדרה כתובת שולח");
+  const to = opts.overrideTo ?? [...new Set([...splitEmails(settings.recipients), ...splitEmails(item.email_to)])];
+  if (to.length === 0) return skip("לא הוגדרו נמענים");
 
-  const allVars = { client: db.tenant.title, ...israelDateTime(), ...vars };
-  const subject = (opts.test ? "[בדיקה] " : "") + renderTemplate(tpl.subject, allVars);
-  const text = renderTemplate(tpl.body, allVars);
+  const email = buildEmail(db.tenant.title, settings, item, purchase, { test: opts.test });
   const from = settings.from_name ? `${settings.from_name.replace(/[<>"]/g, "")} <${settings.from_email}>` : settings.from_email;
 
   let result: SendResult;
   try {
-    result = await sendEmail(apiKey, {
-      from,
-      to,
-      subject,
-      text,
-      html: emailHtml(subject, text),
-      replyTo: settings.reply_to || undefined,
-      idempotencyKey: opts.idempotencyKey,
-    });
+    result = await sendEmail(apiKey, { from, to, ...email, replyTo: settings.reply_to || undefined, idempotencyKey: opts.idempotencyKey });
   } catch (err) {
     result = { ok: false, error: String(err) };
   }
   await db
-    .log("system", null, result.ok ? "email_sent" : "email_failed", { event, to, subject, test: !!opts.test, id: result.id, error: result.error })
+    .log("system", null, result.ok ? "email_sent" : "email_failed", { item: purchase.item, to, subject: email.subject, test: !!opts.test, id: result.id, error: result.error })
     .catch(() => {});
   return result;
 }

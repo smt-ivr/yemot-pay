@@ -6,6 +6,7 @@ import { handleCheck } from "./ivr/check";
 import { failResponse, type IvrContext } from "./ivr/common";
 import { handleCourse } from "./ivr/course";
 import { handleProduct } from "./ivr/product";
+import { sayText } from "./ivr/texts";
 import { ensurePlatform, getTenantByClient, keyMatches, type TenantConfig } from "./tenants";
 import { parseYemotRequest } from "./yemot/request";
 
@@ -87,12 +88,12 @@ async function handleIvr(
 
     if (!(await keyMatches(tenant, req.get("key")))) {
       await db.log(req.phone, req.callId, "config_error", { endpoint: action, problem: "wrong_or_missing_key" });
-      return failResponse(req, "השלוחה לא הוגדרה כראוי");
+      return failResponse(req, sayText(tenant, "bad_config"));
     }
     return await handler!({ db, req, waitUntil });
   } catch (err) {
     console.error("ivr handler error", err);
     await db.log(req.phone, req.callId, "error", { endpoint: action, message: String(err) }).catch(() => {});
-    return isCheck ? text("ERROR") : failResponse(req);
+    return isCheck ? text("ERROR") : failResponse(req, sayText(tenant, "general_error"));
   }
 }
